@@ -80,7 +80,50 @@ Tu  v6 Cambio de libreria a Backtrader para mejorar estrategias.
 
 ![License: Personal Non-Commercial](https://img.shields.io/badge/license-personal_non_commercial-informational)
 
+## Descargar CSV desde MT5 hacia data01
+
+Script disponible:
+
+- `download_mt5_data.py`
+
+Objetivo:
+
+- Descargar OHLCV desde MetaTrader5 para varios tickers.
+- Exportar al formato exacto que ya usa `data01`:
+  - `time,open,high,low,close,Volume`
+  - `time` en epoch UNIX (segundos, UTC).
+- Sobrescribir `data01/<TICKER>.csv`.
+
+Como usar:
+
+1. Edita los toggles al inicio del script:
+   - `START_UTC = "YYYY-MM-DD HH:MM:SS"`
+   - `END_UTC = "YYYY-MM-DD HH:MM:SS"`
+   - `TICKERS = ["EURUSD", "GBPUSD", "USDJPY"]`
+   - `TIMEFRAME = "M1"`
+   - `OUTPUT_DIR = "data01"`
+   - `OVERWRITE = True`
+2. Ejecuta desde `backtest bot v7.0 syncro`:
+   - `.\.venv\Scripts\python.exe .\download_mt5_data.py`
+
+Notas importantes:
+
+- Las fechas se interpretan siempre en UTC explicito.
+- Si un simbolo no devuelve datos en ese rango, se reporta warning y no se crea CSV vacio.
+- Si hay fallos parciales, el script sigue con los demas simbolos y muestra resumen.
+
 ## Changelog de logica
+
+- Fecha: 2026-02-27
+  - Cambios:
+    - Se agrega `download_mt5_data.py` para descargar OHLCV desde MetaTrader5 con toggles en archivo.
+    - Exporta CSV en formato `time,open,high,low,close,Volume` dentro de `data01`.
+    - Valida `START_UTC/END_UTC`, timeframe y lista de simbolos; soporta fallos parciales con resumen.
+  - Archivos:
+    - download_mt5_data.py
+    - README.md
+  - Impacto esperado:
+    - Facilita refrescar datos historicos MT5 para backtest sin depender de export manual.
 
 - Fecha: 2026-02-22
   - Cambios:

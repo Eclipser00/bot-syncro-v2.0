@@ -20,3 +20,12 @@ backtest bot v7.0 syncro/wf/
 last_tradnig_bot_v2.0_pivot_zone_syncro/datadevelopment/
 last_tradnig_bot_v2.0_pivot_zone_syncro/outputs/
 last_tradnig_bot_v2.0_pivot_zone_syncro/logs/
+
+Add-Content .gitignore "`n**/logs/"
+Add-Content .gitignore "`n**/outputs/"
+
+**/logs/
+**/outputs/
+
+
+
