@@ -1,0 +1,5 @@
+- Evalua cada activo por separado.
+- Toma la combinacion ganadora de parametros en results.xslx
+- Promedia size de cada activo basandose en avg.Drawdown de resuts.xslx
+- Recalcula todos los activos como una sola  estrategia tomando posiciones en todos vela por vela.
+- .

@@ -1,0 +1,5 @@
+.agent/
+.venv/
+venv/
+env/
+ENV/

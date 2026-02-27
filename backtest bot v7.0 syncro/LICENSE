@@ -1,0 +1,29 @@
+Personal Non-Commercial Software License (based on CC BY-NC 4.0)
+
+Copyright (c) 2025 Ricardo Gracia
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to use,
+copy, modify, and merge the Software for **personal, educational, or research purposes only**,
+subject to the following conditions:
+
+1. **Non-Commercial Use**  
+   The Software may not be sold, sublicensed, redistributed, or used
+   in any commercial product, service, or project that generates revenue,
+   directly or indirectly, without the express written permission of the author.
+
+2. **Attribution**  
+   Any public use, reproduction, or derivative work must give appropriate
+   credit to the author (Ricardo Gracia) and include a link to the original repository.
+
+3. **No Warranty**  
+   The Software is provided “as is”, without warranty of any kind, express or implied,
+   including but not limited to the warranties of merchantability, fitness for a particular
+   purpose, and non-infringement. In no event shall the author be liable for any claim,
+   damages, or other liability arising from, out of, or in connection with the Software
+   or its use.
+
+4. **Preservation of Notice**  
+   This license notice must be included in all copies or substantial portions of the Software.
+
+By using this software you agree to the above terms.
