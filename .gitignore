@@ -3,3 +3,20 @@
 venv/
 env/
 ENV/
+/parity tool/
+backtest bot v7.0 syncro/cscv/
+backtest bot v7.0 syncro/data01/
+backtest bot v7.0 syncro/data02/
+backtest bot v7.0 syncro/data03/
+backtest bot v7.0 syncro/grid/
+backtest bot v7.0 syncro/heatmaps/
+backtest bot v7.0 syncro/outputs/
+backtest bot v7.0 syncro/plots/
+backtest bot v7.0 syncro/results/
+backtest bot v7.0 syncro/stats/
+backtest bot v7.0 syncro/stress/
+backtest bot v7.0 syncro/trades/
+backtest bot v7.0 syncro/wf/
+last_tradnig_bot_v2.0_pivot_zone_syncro/datadevelopment/
+last_tradnig_bot_v2.0_pivot_zone_syncro/outputs/
+last_tradnig_bot_v2.0_pivot_zone_syncro/logs/
