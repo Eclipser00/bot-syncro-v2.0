@@ -1,17 +1,17 @@
-"""Cliente de broker basado en MetaTrader 5.
+﻿"""Cliente de broker basado en MetaTrader 5.
 
-Define el protocolo BrokerClient para desacoplar la lógica del bot del broker
-concreto y una implementación concreta MetaTrader5Client que se integra con
-la librería MetaTrader5 oficial.
+Define el protocolo BrokerClient para desacoplar la lÃ³gica del bot del broker
+concreto y una implementaciÃ³n concreta MetaTrader5Client que se integra con
+la librerÃ­a MetaTrader5 oficial.
 
-Esta implementación incluye:
-- Conexión y reconexión automática
+Esta implementaciÃ³n incluye:
+- ConexiÃ³n y reconexiÃ³n automÃ¡tica
 - Descarga de datos OHLCV con validaciones
-- Envío de órdenes con manejo de errores
+- EnvÃ­o de Ã³rdenes con manejo de errores
 - Consulta de posiciones y trades
 - Logging exhaustivo para debugging
-- Validaciones de parámetros
-- Cache de información de símbolos para performance
+- Validaciones de parÃ¡metros
+- Cache de informaciÃ³n de sÃ­mbolos para performance
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from bot_trading.domain.entities import (
     TradeRecord,
 )
 
-# Configuración de logging
+# ConfiguraciÃ³n de logging
 logger = logging.getLogger(__name__)
 
 
@@ -43,17 +43,17 @@ logger = logging.getLogger(__name__)
 
 
 class MT5Error(Exception):
-    """Excepción base para errores de MetaTrader 5."""
+    """ExcepciÃ³n base para errores de MetaTrader 5."""
     pass
 
 
 class MT5ConnectionError(MT5Error):
-    """Error de conexión con MetaTrader 5."""
+    """Error de conexiÃ³n con MetaTrader 5."""
     pass
 
 
 class MT5OrderError(MT5Error):
-    """Error al enviar órdenes a MetaTrader 5."""
+    """Error al enviar Ã³rdenes a MetaTrader 5."""
     pass
 
 
@@ -70,20 +70,20 @@ class MT5DataError(MT5Error):
 class BrokerClient(Protocol):
     """Protocolo para clientes de broker.
 
-    Cualquier implementación concreta debe proveer los métodos indicados para
-    ser utilizada por el bot sin depender de la librería específica.
+    Cualquier implementaciÃ³n concreta debe proveer los mÃ©todos indicados para
+    ser utilizada por el bot sin depender de la librerÃ­a especÃ­fica.
     """
 
     def connect(self) -> None:
-        """Realiza la conexión con el broker."""
+        """Realiza la conexiÃ³n con el broker."""
 
     def get_ohlcv(
         self, symbol: str, timeframe: str, start: datetime, end: datetime
     ) -> pd.DataFrame:
-        """Obtiene datos OHLCV para un símbolo y timeframe."""
+        """Obtiene datos OHLCV para un sÃ­mbolo y timeframe."""
 
     def send_market_order(self, order_request: OrderRequest) -> OrderResult:
-        """Envía una orden a mercado y devuelve el resultado."""
+        """EnvÃ­a una orden a mercado y devuelve el resultado."""
 
     def get_open_positions(self) -> list[Position]:
         """Recupera las posiciones abiertas."""
@@ -92,7 +92,7 @@ class BrokerClient(Protocol):
         """Recupera trades cerrados recientes."""
 
     def get_account_info(self) -> AccountInfo:
-        """Obtiene información de cuenta del broker."""
+        """Obtiene informaciÃ³n de cuenta del broker."""
 
     def create_pending_order(
         self,
@@ -126,12 +126,12 @@ class BrokerClient(Protocol):
         stop_loss: Optional[float] = None,
         take_profit: Optional[float] = None,
     ) -> OrderResult:
-        """Modifica SL/TP de una posición abierta."""
+        """Modifica SL/TP de una posiciÃ³n abierta."""
 
     def get_open_orders(
         self, symbol: Optional[str] = None, magic_number: Optional[int] = None
     ) -> list[PendingOrder]:
-        """Obtiene las órdenes pendientes abiertas."""
+        """Obtiene las Ã³rdenes pendientes abiertas."""
 
 
 # =============================================================================
@@ -141,6 +141,7 @@ class BrokerClient(Protocol):
 
 TIMEFRAME_MAP = {
     "M1": mt5.TIMEFRAME_M1,
+    "M3": getattr(mt5, "TIMEFRAME_M3", None),
     "M5": mt5.TIMEFRAME_M5,
     "M15": mt5.TIMEFRAME_M15,
     "M30": mt5.TIMEFRAME_M30,
@@ -158,24 +159,24 @@ TIMEFRAME_MAP = {
 
 
 class MetaTrader5Client:
-    """Cliente específico para MetaTrader 5.
+    """Cliente especÃ­fico para MetaTrader 5.
 
-    Implementación completa que integra con la librería oficial MetaTrader5.
-    Incluye manejo robusto de errores, reconexiones automáticas, validaciones
+    ImplementaciÃ³n completa que integra con la librerÃ­a oficial MetaTrader5.
+    Incluye manejo robusto de errores, reconexiones automÃ¡ticas, validaciones
     y logging exhaustivo para facilitar debugging y trazabilidad.
 
     Attributes:
-        connected: Estado de la conexión con MT5.
-        max_retries: Número máximo de reintentos para operaciones críticas.
+        connected: Estado de la conexiÃ³n con MT5.
+        max_retries: NÃºmero mÃ¡ximo de reintentos para operaciones crÃ­ticas.
         retry_delay: Delay en segundos entre reintentos (con exponential backoff).
-        _symbol_info_cache: Cache de información de símbolos para optimizar consultas.
+        _symbol_info_cache: Cache de informaciÃ³n de sÃ­mbolos para optimizar consultas.
     """
 
     def __init__(self, max_retries: int = 3, retry_delay: float = 1.0) -> None:
         """Inicializa el cliente MT5.
 
         Args:
-            max_retries: Número máximo de reintentos para operaciones.
+            max_retries: NÃºmero mÃ¡ximo de reintentos para operaciones.
             retry_delay: Delay base entre reintentos en segundos.
         """
         self.connected: bool = False
@@ -187,19 +188,19 @@ class MetaTrader5Client:
                     max_retries, retry_delay)
 
     def connect(self) -> None:
-        """Inicializa la conexión con MetaTrader5.
+        """Inicializa la conexiÃ³n con MetaTrader5.
 
-        Intenta conectar con MT5 y verifica que el terminal esté corriendo.
-        Si falla, lanza MT5ConnectionError con información del error.
+        Intenta conectar con MT5 y verifica que el terminal estÃ© corriendo.
+        Si falla, lanza MT5ConnectionError con informaciÃ³n del error.
 
         Raises:
-            MT5ConnectionError: Si no se puede establecer la conexión.
+            MT5ConnectionError: Si no se puede establecer la conexiÃ³n.
         """
         logger.info("Intentando conectar con MetaTrader5...")
         
         if not mt5.initialize():
             error_code, error_msg = mt5.last_error()
-            logger.error("Fallo al inicializar MT5. Código: %d, Mensaje: %s", 
+            logger.error("Fallo al inicializar MT5. CÃ³digo: %d, Mensaje: %s", 
                         error_code, error_msg)
             raise MT5ConnectionError(
                 f"No se pudo inicializar MetaTrader5. Error {error_code}: {error_msg}"
@@ -207,29 +208,29 @@ class MetaTrader5Client:
         
         self.connected = True
         
-        # Obtener información del terminal para logs
+        # Obtener informaciÃ³n del terminal para logs
         terminal_info = mt5.terminal_info()
         account_info = mt5.account_info()
         
         if terminal_info and account_info:
-            logger.info("Conexión exitosa con MT5. Terminal: %s, Cuenta: %d, Balance: %.2f",
+            logger.info("ConexiÃ³n exitosa con MT5. Terminal: %s, Cuenta: %d, Balance: %.2f",
                        terminal_info.name, account_info.login, account_info.balance)
         else:
-            logger.info("Conexión exitosa con MT5 (información limitada)")
+            logger.info("ConexiÃ³n exitosa con MT5 (informaciÃ³n limitada)")
             
-        logger.debug("Estado de conexión actualizado: connected=True")
+        logger.debug("Estado de conexiÃ³n actualizado: connected=True")
 
     def _ensure_connected(self) -> None:
-        """Verifica que existe conexión activa, si no intenta reconectar.
+        """Verifica que existe conexiÃ³n activa, si no intenta reconectar.
 
         Raises:
-            MT5ConnectionError: Si no hay conexión y no se puede reconectar.
+            MT5ConnectionError: Si no hay conexiÃ³n y no se puede reconectar.
         """
         if not self.connected:
-            logger.warning("No hay conexión activa. Intentando reconectar...")
+            logger.warning("No hay conexiÃ³n activa. Intentando reconectar...")
             self.connect()
         
-        # Verificar que MT5 realmente está disponible
+        # Verificar que MT5 realmente estÃ¡ disponible
         if not mt5.terminal_info():
             logger.warning("Terminal MT5 no responde. Intentando reinicializar...")
             self.connected = False
@@ -246,7 +247,7 @@ class MetaTrader5Client:
         """Obtiene la hora del servidor MT5 (timezone UTC)."""
         self._ensure_connected()
 
-        # Priorizar símbolo sugerido, luego alguno cacheado y un fallback común
+        # Priorizar sÃ­mbolo sugerido, luego alguno cacheado y un fallback comÃºn
         candidates = [s for s in [symbol] if s] + list(self._symbol_info_cache.keys()) + ["EURUSD"]
 
         for sym in candidates:
@@ -263,68 +264,68 @@ class MetaTrader5Client:
         return datetime.now(timezone.utc)
 
     def _get_symbol_info(self, symbol: str) -> mt5.SymbolInfo:
-        """Obtiene información del símbolo con cache.
+        """Obtiene informaciÃ³n del sÃ­mbolo con cache.
 
         Args:
-            symbol: Nombre del símbolo (ej: "EURUSD").
+            symbol: Nombre del sÃ­mbolo (ej: "EURUSD").
 
         Returns:
-            Información del símbolo desde MT5.
+            InformaciÃ³n del sÃ­mbolo desde MT5.
 
         Raises:
-            MT5DataError: Si el símbolo no existe o no está disponible.
+            MT5DataError: Si el sÃ­mbolo no existe o no estÃ¡ disponible.
         """
         # Verificar cache
         if symbol in self._symbol_info_cache:
             cache_time, cached_info = self._symbol_info_cache[symbol]
-            # Cache válido por 60 segundos
+            # Cache vÃ¡lido por 60 segundos
             if time.time() - cache_time < 60:
-                logger.debug("Usando información cacheada para símbolo: %s", symbol)
+                logger.debug("Usando informaciÃ³n cacheada para sÃ­mbolo: %s", symbol)
                 return cached_info
         
         # Consultar a MT5
-        logger.debug("Consultando información de símbolo: %s", symbol)
+        logger.debug("Consultando informaciÃ³n de sÃ­mbolo: %s", symbol)
         symbol_info = mt5.symbol_info(symbol)
         
         if symbol_info is None:
             error_code, error_msg = mt5.last_error()
-            logger.error("Símbolo no encontrado: %s. Error %d: %s", 
+            logger.error("SÃ­mbolo no encontrado: %s. Error %d: %s", 
                         symbol, error_code, error_msg)
-            raise MT5DataError(f"Símbolo '{symbol}' no existe o no está disponible")
+            raise MT5DataError(f"SÃ­mbolo '{symbol}' no existe o no estÃ¡ disponible")
         
-        # Verificar que el símbolo está visible
+        # Verificar que el sÃ­mbolo estÃ¡ visible
         if not symbol_info.visible:
-            logger.info("Símbolo %s no está visible. Intentando hacerlo visible...", symbol)
+            logger.info("SÃ­mbolo %s no estÃ¡ visible. Intentando hacerlo visible...", symbol)
             if not mt5.symbol_select(symbol, True):
                 error_code, error_msg = mt5.last_error()
-                logger.error("No se pudo hacer visible el símbolo %s. Error %d: %s",
+                logger.error("No se pudo hacer visible el sÃ­mbolo %s. Error %d: %s",
                            symbol, error_code, error_msg)
-                raise MT5DataError(f"No se pudo hacer visible el símbolo '{symbol}'")
+                raise MT5DataError(f"No se pudo hacer visible el sÃ­mbolo '{symbol}'")
         
         # Cachear
         self._symbol_info_cache[symbol] = (time.time(), symbol_info)
-        logger.debug("Información de símbolo %s cacheada. Spread: %d, Lot min: %.2f",
+        logger.debug("InformaciÃ³n de sÃ­mbolo %s cacheada. Spread: %d, Lot min: %.2f",
                     symbol, symbol_info.spread, symbol_info.volume_min)
         
         return symbol_info
 
     def _get_filling_mode(self, symbol: str) -> int:
-        """Obtiene el filling mode compatible con el símbolo.
+        """Obtiene el filling mode compatible con el sÃ­mbolo.
         
-        MT5 soporta diferentes modos de llenado según el tipo de instrumento:
+        MT5 soporta diferentes modos de llenado segÃºn el tipo de instrumento:
         - ORDER_FILLING_FOK (Fill or Kill): Forex mayormente
         - ORDER_FILLING_IOC (Immediate or Cancel): Futuros, algunos Forex
         - ORDER_FILLING_RETURN: Acciones
         
         Args:
-            symbol: Nombre del símbolo.
+            symbol: Nombre del sÃ­mbolo.
             
         Returns:
-            Constante de filling mode de MT5 compatible con el símbolo.
+            Constante de filling mode de MT5 compatible con el sÃ­mbolo.
         """
         symbol_info = self._get_symbol_info(symbol)
         
-        # Verificar qué modos de llenado soporta el símbolo
+        # Verificar quÃ© modos de llenado soporta el sÃ­mbolo
         # filling_mode es un bitmask donde cada bit representa un modo
         filling_modes = symbol_info.filling_mode
         
@@ -332,7 +333,7 @@ class MetaTrader5Client:
                    symbol, filling_modes, bin(filling_modes))
         
         # Prioridad: FOK > IOC > RETURN
-        # FOK es el más común para Forex
+        # FOK es el mÃ¡s comÃºn para Forex
         # Bit 0 (valor 1) = ORDER_FILLING_FOK
         # Bit 1 (valor 2) = ORDER_FILLING_IOC
         # Bit 2 (valor 4) = ORDER_FILLING_RETURN
@@ -347,11 +348,11 @@ class MetaTrader5Client:
             return mt5.ORDER_FILLING_RETURN
         else:
             # Fallback: usar FOK por defecto
-            logger.warning("No se detectó filling mode para %s, usando FOK por defecto", symbol)
+            logger.warning("No se detectÃ³ filling mode para %s, usando FOK por defecto", symbol)
             return mt5.ORDER_FILLING_FOK
 
     def _normalize_pending_price(self, symbol: str, order_type: str, requested_price: float) -> float:
-        """Ajusta precio de orden pendiente según bid/ask y stops level del símbolo."""
+        """Ajusta precio de orden pendiente segÃºn bid/ask y stops level del sÃ­mbolo."""
         try:
             symbol_info = self._get_symbol_info(symbol)
             tick = mt5.symbol_info_tick(symbol)
@@ -416,11 +417,11 @@ class MetaTrader5Client:
         stop_loss: Optional[float],
         take_profit: Optional[float],
     ) -> tuple[Optional[float], Optional[float]]:
-        """Ajusta SL/TP de órdenes de mercado para cumplir reglas mínimas del símbolo.
+        """Ajusta SL/TP de Ã³rdenes de mercado para cumplir reglas mÃ­nimas del sÃ­mbolo.
 
         En MT5, el retcode 10016 (`Invalid stops`) ocurre cuando SL/TP quedan del lado
-        incorrecto o demasiado cerca del precio de referencia del símbolo.
-        Este método corrige niveles al límite válido más cercano para minimizar rechazos.
+        incorrecto o demasiado cerca del precio de referencia del sÃ­mbolo.
+        Este mÃ©todo corrige niveles al lÃ­mite vÃ¡lido mÃ¡s cercano para minimizar rechazos.
         """
         if stop_loss is None and take_profit is None:
             return stop_loss, take_profit
@@ -541,13 +542,13 @@ class MetaTrader5Client:
 
             if stop_loss is not None and normalized_sl is None:
                 logger.warning(
-                    "SL omitido en orden de mercado para %s %s: no fue posible calcular un nivel válido",
+                    "SL omitido en orden de mercado para %s %s: no fue posible calcular un nivel vÃ¡lido",
                     order_type,
                     symbol,
                 )
             if take_profit is not None and normalized_tp is None:
                 logger.warning(
-                    "TP omitido en orden de mercado para %s %s: no fue posible calcular un nivel válido",
+                    "TP omitido en orden de mercado para %s %s: no fue posible calcular un nivel vÃ¡lido",
                     order_type,
                     symbol,
                 )
@@ -568,7 +569,7 @@ class MetaTrader5Client:
         """Calcula el margen requerido para una orden usando MT5.
         
         Args:
-            symbol: Símbolo a operar.
+            symbol: SÃ­mbolo a operar.
             order_type: Tipo de orden (mt5.ORDER_TYPE_BUY o mt5.ORDER_TYPE_SELL).
             volume: Volumen de la orden.
             price: Precio de la orden.
@@ -594,7 +595,7 @@ class MetaTrader5Client:
         """Descarga datos OHLCV desde MetaTrader5.
 
         Args:
-            symbol: Símbolo a consultar (ej: "EURUSD").
+            symbol: SÃ­mbolo a consultar (ej: "EURUSD").
             timeframe: Timeframe solicitado (M1, M5, M15, M30, H1, H4, D1, W1, MN1).
             start: Fecha y hora de inicio del rango.
             end: Fecha y hora de fin del rango.
@@ -603,33 +604,41 @@ class MetaTrader5Client:
             DataFrame con columnas: datetime, open, high, low, close, volume.
 
         Raises:
-            MT5ConnectionError: Si no hay conexión activa.
+            MT5ConnectionError: Si no hay conexiÃ³n activa.
             MT5DataError: Si hay error al descargar los datos.
-            ValueError: Si los parámetros no son válidos.
+            ValueError: Si los parÃ¡metros no son vÃ¡lidos.
         """
         start_utc = self._ensure_utc_datetime(start)
         end_utc = self._ensure_utc_datetime(end)
         logger.info("Descargando OHLCV para %s, timeframe=%s, desde %s hasta %s",
                    symbol, timeframe, start_utc, end_utc)
         
-        # Verificar conexión
+        # Verificar conexiÃ³n
         self._ensure_connected()
         
         # Validar timeframe
         if timeframe not in TIMEFRAME_MAP:
-            logger.error("Timeframe inválido: %s. Válidos: %s", 
+            logger.error("Timeframe invÃ¡lido: %s. VÃ¡lidos: %s", 
                         timeframe, list(TIMEFRAME_MAP.keys()))
             raise ValueError(
-                f"Timeframe '{timeframe}' no es válido. "
+                f"Timeframe '{timeframe}' no es vÃ¡lido. "
                 f"Debe ser uno de: {', '.join(TIMEFRAME_MAP.keys())}"
+            )
+        if TIMEFRAME_MAP.get(timeframe) is None:
+            logger.error(
+                "Timeframe %s no estÃ¡ disponible en este runtime de MetaTrader5.",
+                timeframe,
+            )
+            raise ValueError(
+                f"Timeframe '{timeframe}' no estÃ¡ disponible en este runtime de MetaTrader5."
             )
         
         # Validar fechas
         if start_utc >= end_utc:
-            logger.error("Rango de fechas inválido: start=%s >= end=%s", start_utc, end_utc)
+            logger.error("Rango de fechas invÃ¡lido: start=%s >= end=%s", start_utc, end_utc)
             raise ValueError("La fecha de inicio debe ser anterior a la fecha de fin")
         
-        # Validar símbolo
+        # Validar sÃ­mbolo
         self._get_symbol_info(symbol)
         
         # Mapear timeframe
@@ -641,7 +650,7 @@ class MetaTrader5Client:
         
         if rates is None:
             error_code, error_msg = mt5.last_error()
-            logger.error("Error al descargar datos. Código: %d, Mensaje: %s",
+            logger.error("Error al descargar datos. CÃ³digo: %d, Mensaje: %s",
                         error_code, error_msg)
             raise MT5DataError(
                 f"No se pudieron descargar datos para {symbol}. "
@@ -650,7 +659,7 @@ class MetaTrader5Client:
         
         if len(rates) == 0:
             logger.warning("No hay datos disponibles para el rango solicitado")
-            # Retornar DataFrame vacío con columnas correctas y DatetimeIndex
+            # Retornar DataFrame vacÃ­o con columnas correctas y DatetimeIndex
             df_empty = pd.DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
             df_empty['datetime'] = pd.to_datetime(df_empty['datetime'], utc=True)
             df_empty.set_index('datetime', inplace=True)
@@ -664,68 +673,68 @@ class MetaTrader5Client:
         df = df[['datetime', 'open', 'high', 'low', 'close', 'tick_volume']]
         df.rename(columns={'tick_volume': 'volume'}, inplace=True)
         
-        # Configurar datetime como índice para compatibilidad con resample
+        # Configurar datetime como Ã­ndice para compatibilidad con resample
         df.set_index('datetime', inplace=True)
         
         logger.info("Descargados %d registros OHLCV para %s", len(df), symbol)
-        logger.debug("Primer registro: %s | Último registro: %s",
+        logger.debug("Primer registro: %s | Ãšltimo registro: %s",
                     df.index[0], df.index[-1])
         
         return df
 
     def send_market_order(self, order_request: OrderRequest) -> OrderResult:
-        """Envía una orden de mercado a MetaTrader5.
+        """EnvÃ­a una orden de mercado a MetaTrader5.
 
         Args:
             order_request: Objeto con los detalles de la orden.
 
         Returns:
-            OrderResult con el resultado de la operación.
+            OrderResult con el resultado de la operaciÃ³n.
 
         Raises:
-            MT5ConnectionError: Si no hay conexión activa.
-            ValueError: Si los parámetros de la orden son inválidos.
+            MT5ConnectionError: Si no hay conexiÃ³n activa.
+            ValueError: Si los parÃ¡metros de la orden son invÃ¡lidos.
         """
         logger.info("Enviando orden: %s %s %.2f lotes, SL=%s, TP=%s, Magic=%s, Comment=%s",
                    order_request.order_type, order_request.symbol, order_request.volume,
                    order_request.stop_loss, order_request.take_profit,
                    order_request.magic_number, order_request.comment)
         
-        # Verificar conexión
+        # Verificar conexiÃ³n
         self._ensure_connected()
         
         # Validar tipo de orden
         valid_types = ["BUY", "SELL", "CLOSE"]
         if order_request.order_type not in valid_types:
-            logger.error("Tipo de orden inválido: %s. Válidos: %s",
+            logger.error("Tipo de orden invÃ¡lido: %s. VÃ¡lidos: %s",
                         order_request.order_type, valid_types)
             raise ValueError(
-                f"Tipo de orden '{order_request.order_type}' no válido. "
+                f"Tipo de orden '{order_request.order_type}' no vÃ¡lido. "
                 f"Debe ser: {', '.join(valid_types)}"
             )
         
         # Validar volumen
         if order_request.volume <= 0:
-            logger.error("Volumen inválido: %.4f. Debe ser > 0", order_request.volume)
+            logger.error("Volumen invÃ¡lido: %.4f. Debe ser > 0", order_request.volume)
             raise ValueError(f"El volumen debe ser mayor que 0, recibido: {order_request.volume}")
         
-        # Obtener información del símbolo
+        # Obtener informaciÃ³n del sÃ­mbolo
         symbol_info = self._get_symbol_info(order_request.symbol)
         
-        # Validar volumen contra límites del símbolo
+        # Validar volumen contra lÃ­mites del sÃ­mbolo
         if order_request.volume < symbol_info.volume_min:
-            logger.error("Volumen %.4f menor que mínimo permitido %.4f",
+            logger.error("Volumen %.4f menor que mÃ­nimo permitido %.4f",
                         order_request.volume, symbol_info.volume_min)
             raise ValueError(
-                f"Volumen {order_request.volume} menor que el mínimo "
+                f"Volumen {order_request.volume} menor que el mÃ­nimo "
                 f"{symbol_info.volume_min} para {order_request.symbol}"
             )
         
         if order_request.volume > symbol_info.volume_max:
-            logger.error("Volumen %.4f mayor que máximo permitido %.4f",
+            logger.error("Volumen %.4f mayor que mÃ¡ximo permitido %.4f",
                         order_request.volume, symbol_info.volume_max)
             raise ValueError(
-                f"Volumen {order_request.volume} mayor que el máximo "
+                f"Volumen {order_request.volume} mayor que el mÃ¡ximo "
                 f"{symbol_info.volume_max} para {order_request.symbol}"
             )
         
@@ -733,7 +742,7 @@ class MetaTrader5Client:
         volume_step = symbol_info.volume_step
         rounded_volume = round(order_request.volume / volume_step) * volume_step
         if abs(rounded_volume - order_request.volume) > 0.0001:
-            logger.warning("Volumen ajustado de %.4f a %.4f según step %.4f",
+            logger.warning("Volumen ajustado de %.4f a %.4f segÃºn step %.4f",
                           order_request.volume, rounded_volume, volume_step)
             order_request.volume = rounded_volume
         
@@ -763,10 +772,10 @@ class MetaTrader5Client:
             price = tick.bid
             logger.debug("Orden SELL a precio BID: %.5f", price)
         
-        # Detectar filling mode compatible con el símbolo
+        # Detectar filling mode compatible con el sÃ­mbolo
         filling_mode = self._get_filling_mode(order_request.symbol)
 
-        # Ajustar SL/TP contra reglas de distancia mínima del símbolo para reducir
+        # Ajustar SL/TP contra reglas de distancia mÃ­nima del sÃ­mbolo para reducir
         # rechazos 10016 (Invalid stops) por niveles demasiado cercanos al mercado.
         normalized_sl, normalized_tp = self._normalize_market_stops(
             symbol=order_request.symbol,
@@ -785,14 +794,14 @@ class MetaTrader5Client:
             "volume": order_request.volume,
             "type": order_type,
             "price": price,
-            "deviation": 20,  # Desviación máxima de precio en puntos
+            "deviation": 20,  # DesviaciÃ³n mÃ¡xima de precio en puntos
             "magic": order_request.magic_number or 0,
             "comment": order_request.comment or "",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": filling_mode,  # Usar filling mode detectado automáticamente
+            "type_filling": filling_mode,  # Usar filling mode detectado automÃ¡ticamente
         }
         
-        # Añadir SL/TP si están presentes
+        # AÃ±adir SL/TP si estÃ¡n presentes
         if order_request.stop_loss is not None:
             request["sl"] = order_request.stop_loss
             logger.debug("Stop Loss configurado: %.5f", order_request.stop_loss)
@@ -807,7 +816,7 @@ class MetaTrader5Client:
         
         if result is None:
             error_code, error_msg = mt5.last_error()
-            logger.error("Error al enviar orden. Código: %d, Mensaje: %s",
+            logger.error("Error al enviar orden. CÃ³digo: %d, Mensaje: %s",
                         error_code, error_msg)
             return OrderResult(
                 success=False,
@@ -820,7 +829,7 @@ class MetaTrader5Client:
                         result.retcode, result.comment)
             return OrderResult(
                 success=False,
-                error_message=f"Orden rechazada: {result.comment} (código {result.retcode})"
+                error_message=f"Orden rechazada: {result.comment} (cÃ³digo {result.retcode})"
             )
         
         logger.info("Orden ejecutada exitosamente. Order ID: %d, Volume: %.2f, Price: %.5f",
@@ -867,7 +876,7 @@ class MetaTrader5Client:
             "SELL_STOP_LIMIT": mt5.ORDER_TYPE_SELL_STOP_LIMIT,
         }
         if order_type not in pending_map:
-            raise ValueError(f"Tipo de orden pendiente inválido: {order_type}")
+            raise ValueError(f"Tipo de orden pendiente invÃ¡lido: {order_type}")
 
         if volume <= 0:
             raise ValueError("El volumen de la orden pendiente debe ser > 0")
@@ -875,7 +884,7 @@ class MetaTrader5Client:
         symbol_info = self._get_symbol_info(symbol)
         if volume < symbol_info.volume_min or volume > symbol_info.volume_max:
             raise ValueError(
-                f"Volumen {volume} fuera de límites [{symbol_info.volume_min}, {symbol_info.volume_max}]"
+                f"Volumen {volume} fuera de lÃ­mites [{symbol_info.volume_min}, {symbol_info.volume_max}]"
             )
 
         volume_step = symbol_info.volume_step
@@ -908,7 +917,7 @@ class MetaTrader5Client:
         result = mt5.order_send(request)
         if result is None:
             error_code, error_msg = mt5.last_error()
-            logger.error("Error al enviar orden pendiente. Código: %d, Mensaje: %s", error_code, error_msg)
+            logger.error("Error al enviar orden pendiente. CÃ³digo: %d, Mensaje: %s", error_code, error_msg)
             return OrderResult(
                 success=False,
                 error_message=f"Error al enviar orden pendiente: {error_code} - {error_msg}",
@@ -918,7 +927,7 @@ class MetaTrader5Client:
             logger.error("Orden pendiente rechazada. RetCode: %d, Comentario: %s", result.retcode, result.comment)
             return OrderResult(
                 success=False,
-                error_message=f"Orden pendiente rechazada: {result.comment} (código {result.retcode})",
+                error_message=f"Orden pendiente rechazada: {result.comment} (cÃ³digo {result.retcode})",
             )
 
         logger.info("Orden pendiente creada. ID: %d price=%.5f", result.order, normalized_price)
@@ -972,7 +981,7 @@ class MetaTrader5Client:
             if order_symbol and order_type_str:
                 normalized_price = self._normalize_pending_price(order_symbol, order_type_str, float(price))
             if current_price is not None and abs(normalized_price - current_price) < 1e-8:
-                logger.info("Modificación omitida para orden %s: sin cambios en precio", order_id)
+                logger.info("ModificaciÃ³n omitida para orden %s: sin cambios en precio", order_id)
                 return OrderResult(success=True, order_id=order_id, error_message=None)
             request["price"] = normalized_price
         if stop_loss is not None:
@@ -984,18 +993,18 @@ class MetaTrader5Client:
         result = mt5.order_send(request)
         if result is None:
             error_code, error_msg = mt5.last_error()
-            logger.error("Error al modificar orden. Código: %d, Mensaje: %s", error_code, error_msg)
+            logger.error("Error al modificar orden. CÃ³digo: %d, Mensaje: %s", error_code, error_msg)
             return OrderResult(success=False, error_message=f"Error al modificar orden: {error_code} - {error_msg}")
 
         if result.retcode == 10025:  # TRADE_RETCODE_NO_CHANGES
-            logger.info("Modificación sin cambios para orden %s (retcode=10025)", order_id)
+            logger.info("ModificaciÃ³n sin cambios para orden %s (retcode=10025)", order_id)
             return OrderResult(success=True, order_id=order_id, error_message=None)
 
         if result.retcode != mt5.TRADE_RETCODE_DONE:
-            logger.error("Modificación de orden rechazada. RetCode: %d, Comentario: %s", result.retcode, result.comment)
+            logger.error("ModificaciÃ³n de orden rechazada. RetCode: %d, Comentario: %s", result.retcode, result.comment)
             return OrderResult(
                 success=False,
-                error_message=f"Modificación rechazada: {result.comment} (código {result.retcode})",
+                error_message=f"ModificaciÃ³n rechazada: {result.comment} (cÃ³digo {result.retcode})",
             )
 
         return OrderResult(success=True, order_id=order_id, error_message=None)
@@ -1007,7 +1016,7 @@ class MetaTrader5Client:
         stop_loss: Optional[float] = None,
         take_profit: Optional[float] = None,
     ) -> OrderResult:
-        """Actualiza SL/TP en una posición abierta existente (MT5 TRADE_ACTION_SLTP)."""
+        """Actualiza SL/TP en una posiciÃ³n abierta existente (MT5 TRADE_ACTION_SLTP)."""
         self._ensure_connected()
         positions = mt5.positions_get(symbol=symbol)
         if positions is None or len(positions) == 0:
@@ -1021,7 +1030,7 @@ class MetaTrader5Client:
         if selected is None:
             return OrderResult(
                 success=False,
-                error_message=f"No hay posición para {symbol} con magic {magic_number}",
+                error_message=f"No hay posiciÃ³n para {symbol} con magic {magic_number}",
             )
 
         request: dict[str, object] = {
@@ -1046,7 +1055,7 @@ class MetaTrader5Client:
         if result.retcode != mt5.TRADE_RETCODE_DONE:
             return OrderResult(
                 success=False,
-                error_message=f"SL/TP rechazado: {result.comment} (código {result.retcode})",
+                error_message=f"SL/TP rechazado: {result.comment} (cÃ³digo {result.retcode})",
             )
         return OrderResult(success=True, order_id=int(selected.ticket), error_message=None)
 
@@ -1067,13 +1076,13 @@ class MetaTrader5Client:
     def get_open_orders(
         self, symbol: Optional[str] = None, magic_number: Optional[int] = None
     ) -> list[PendingOrder]:
-        """Obtiene las órdenes pendientes abiertas."""
+        """Obtiene las Ã³rdenes pendientes abiertas."""
         self._ensure_connected()
         kwargs = {"symbol": symbol} if symbol else {}
         orders = mt5.orders_get(**kwargs) if kwargs else mt5.orders_get()
         if orders is None:
             error_code, error_msg = mt5.last_error()
-            logger.error("Error al consultar órdenes pendientes. Código: %d Mensaje: %s", error_code, error_msg)
+            logger.error("Error al consultar Ã³rdenes pendientes. CÃ³digo: %d Mensaje: %s", error_code, error_msg)
             return []
         pending: list[PendingOrder] = []
         for o in orders:
@@ -1095,7 +1104,7 @@ class MetaTrader5Client:
         return pending
 
     def _close_position(self, order_request: OrderRequest) -> OrderResult:
-        """Cierra una posición existente.
+        """Cierra una posiciÃ³n existente.
 
         Args:
             order_request: Orden con order_type="CLOSE".
@@ -1103,7 +1112,7 @@ class MetaTrader5Client:
         Returns:
             OrderResult con el resultado del cierre.
         """
-        logger.info("Intentando cerrar posición para %s con magic=%s",
+        logger.info("Intentando cerrar posiciÃ³n para %s con magic=%s",
                    order_request.symbol, order_request.magic_number)
         
         # Obtener posiciones abiertas
@@ -1116,7 +1125,7 @@ class MetaTrader5Client:
                 error_message=f"No hay posiciones abiertas para {order_request.symbol}"
             )
         
-        # Filtrar por magic number si está presente
+        # Filtrar por magic number si estÃ¡ presente
         if order_request.magic_number is not None:
             positions = [p for p in positions if p.magic == order_request.magic_number]
             if len(positions) == 0:
@@ -1127,12 +1136,12 @@ class MetaTrader5Client:
                     error_message=f"No hay posiciones con magic {order_request.magic_number}"
                 )
         
-        # Cerrar la primera posición encontrada
+        # Cerrar la primera posiciÃ³n encontrada
         position = positions[0]
-        logger.debug("Cerrando posición ticket=%d, volumen=%.2f, tipo=%d",
+        logger.debug("Cerrando posiciÃ³n ticket=%d, volumen=%.2f, tipo=%d",
                     position.ticket, position.volume, position.type)
         
-        # Determinar tipo de orden de cierre (opuesto a la posición)
+        # Determinar tipo de orden de cierre (opuesto a la posiciÃ³n)
         if position.type == mt5.POSITION_TYPE_BUY:
             close_type = mt5.ORDER_TYPE_SELL
             price = mt5.symbol_info_tick(order_request.symbol).bid
@@ -1140,7 +1149,7 @@ class MetaTrader5Client:
             close_type = mt5.ORDER_TYPE_BUY
             price = mt5.symbol_info_tick(order_request.symbol).ask
         
-        # Detectar filling mode compatible con el símbolo
+        # Detectar filling mode compatible con el sÃ­mbolo
         filling_mode = self._get_filling_mode(order_request.symbol)
         
         # Construir request de cierre
@@ -1155,7 +1164,7 @@ class MetaTrader5Client:
             "magic": order_request.magic_number or 0,
             "comment": order_request.comment or "Close position",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": filling_mode,  # Usar filling mode detectado automáticamente
+            "type_filling": filling_mode,  # Usar filling mode detectado automÃ¡ticamente
         }
         
         # Enviar orden de cierre
@@ -1164,7 +1173,7 @@ class MetaTrader5Client:
         
         if result is None:
             error_code, error_msg = mt5.last_error()
-            logger.error("Error al cerrar posición. Código: %d, Mensaje: %s",
+            logger.error("Error al cerrar posiciÃ³n. CÃ³digo: %d, Mensaje: %s",
                         error_code, error_msg)
             return OrderResult(
                 success=False,
@@ -1176,10 +1185,10 @@ class MetaTrader5Client:
                         result.retcode, result.comment)
             return OrderResult(
                 success=False,
-                error_message=f"Cierre rechazado: {result.comment} (código {result.retcode})"
+                error_message=f"Cierre rechazado: {result.comment} (cÃ³digo {result.retcode})"
             )
         
-        logger.info("Posición cerrada exitosamente. Order ID: %d", result.order)
+        logger.info("PosiciÃ³n cerrada exitosamente. Order ID: %d", result.order)
         
         return OrderResult(
             success=True,
@@ -1195,11 +1204,11 @@ class MetaTrader5Client:
             Lista de objetos Position con todas las posiciones abiertas.
 
         Raises:
-            MT5ConnectionError: Si no hay conexión activa.
+            MT5ConnectionError: Si no hay conexiÃ³n activa.
         """
         logger.info("Consultando posiciones abiertas...")
         
-        # Verificar conexión
+        # Verificar conexiÃ³n
         self._ensure_connected()
         
         # Obtener posiciones
@@ -1207,9 +1216,9 @@ class MetaTrader5Client:
         
         if positions is None:
             error_code, error_msg = mt5.last_error()
-            logger.error("Error al consultar posiciones. Código: %d, Mensaje: %s",
+            logger.error("Error al consultar posiciones. CÃ³digo: %d, Mensaje: %s",
                         error_code, error_msg)
-            # Retornar lista vacía en lugar de lanzar error
+            # Retornar lista vacÃ­a en lugar de lanzar error
             return []
         
         if len(positions) == 0:
@@ -1237,7 +1246,7 @@ class MetaTrader5Client:
             
             result.append(position)
             
-            logger.debug("Posición: %s, volumen=%.2f, entry=%.5f, SL=%s, TP=%s, magic=%s",
+            logger.debug("PosiciÃ³n: %s, volumen=%.2f, entry=%.5f, SL=%s, TP=%s, magic=%s",
                         pos.symbol, pos.volume, pos.price_open,
                         position.stop_loss, position.take_profit, pos.magic)
         
@@ -1253,14 +1262,14 @@ class MetaTrader5Client:
             Lista de objetos TradeRecord con los trades cerrados.
 
         Raises:
-            MT5ConnectionError: Si no hay conexión activa.
+            MT5ConnectionError: Si no hay conexiÃ³n activa.
         """
         logger.info("Consultando trades cerrados...")
         
-        # Verificar conexión
+        # Verificar conexiÃ³n
         self._ensure_connected()
         
-        # Obtener historial de deals (últimas 24 horas por defecto)
+        # Obtener historial de deals (Ãºltimas 24 horas por defecto)
         from_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         to_date = datetime.now()
         
@@ -1270,7 +1279,7 @@ class MetaTrader5Client:
         
         if deals is None:
             error_code, error_msg = mt5.last_error()
-            logger.error("Error al consultar historial. Código: %d, Mensaje: %s",
+            logger.error("Error al consultar historial. CÃ³digo: %d, Mensaje: %s",
                         error_code, error_msg)
             return []
         
@@ -1280,7 +1289,7 @@ class MetaTrader5Client:
         
         logger.info("Encontrados %d deals en el historial", len(deals))
         
-        # Agrupar deals por posición para construir trades completos
+        # Agrupar deals por posiciÃ³n para construir trades completos
         trades_dict = {}
         
         for deal in deals:
@@ -1312,7 +1321,7 @@ class MetaTrader5Client:
             
             # Solo procesar trades completos (con entrada y salida)
             if entry_deal is None or exit_deal is None:
-                logger.debug("Trade incompleto para posición %d, omitiendo", position_id)
+                logger.debug("Trade incompleto para posiciÃ³n %d, omitiendo", position_id)
                 continue
             
             # Extraer strategy_name del comentario
@@ -1342,7 +1351,7 @@ class MetaTrader5Client:
                         trade_record.exit_time,
                         pnl)
         
-        # Ordenar por fecha de cierre (más reciente primero)
+        # Ordenar por fecha de cierre (mÃ¡s reciente primero)
         result.sort(key=lambda x: x.exit_time, reverse=True)
         
         logger.info("Procesados %d trades completos", len(result))
@@ -1350,29 +1359,29 @@ class MetaTrader5Client:
         return result
 
     def get_account_info(self) -> AccountInfo:
-        """Obtiene información de cuenta desde MetaTrader5.
+        """Obtiene informaciÃ³n de cuenta desde MetaTrader5.
 
         Returns:
             AccountInfo con balance, equity, margen usado y margen libre.
 
         Raises:
-            MT5ConnectionError: Si no hay conexión activa.
-            MT5DataError: Si no se puede obtener la información de cuenta.
+            MT5ConnectionError: Si no hay conexiÃ³n activa.
+            MT5DataError: Si no se puede obtener la informaciÃ³n de cuenta.
         """
-        logger.debug("Consultando información de cuenta...")
+        logger.debug("Consultando informaciÃ³n de cuenta...")
         
-        # Verificar conexión
+        # Verificar conexiÃ³n
         self._ensure_connected()
         
-        # Obtener información de cuenta desde MT5
+        # Obtener informaciÃ³n de cuenta desde MT5
         account_info = mt5.account_info()
         
         if account_info is None:
             error_code, error_msg = mt5.last_error()
-            logger.error("Error al obtener información de cuenta. Código: %d, Mensaje: %s",
+            logger.error("Error al obtener informaciÃ³n de cuenta. CÃ³digo: %d, Mensaje: %s",
                         error_code, error_msg)
             raise MT5DataError(
-                f"No se pudo obtener información de cuenta. Error {error_code}: {error_msg}"
+                f"No se pudo obtener informaciÃ³n de cuenta. Error {error_code}: {error_msg}"
             )
         
         # Calcular nivel de margen si hay margen usado
@@ -1389,7 +1398,7 @@ class MetaTrader5Client:
         )
         
         logger.debug(
-            "Información de cuenta: Balance=%.2f, Equity=%.2f, Margin=%.2f, "
+            "InformaciÃ³n de cuenta: Balance=%.2f, Equity=%.2f, Margin=%.2f, "
             "MarginFree=%.2f, MarginLevel=%.2f%%",
             result.balance, result.equity, result.margin, 
             result.margin_free, result.margin_level if result.margin_level else 0
@@ -1398,9 +1407,10 @@ class MetaTrader5Client:
         return result
 
     def __del__(self) -> None:
-        """Cierra la conexión con MT5 al destruir el objeto."""
+        """Cierra la conexiÃ³n con MT5 al destruir el objeto."""
         if self.connected:
-            logger.info("Cerrando conexión con MetaTrader5...")
+            logger.info("Cerrando conexiÃ³n con MetaTrader5...")
             mt5.shutdown()
             self.connected = False
-            logger.info("Conexión cerrada")
+            logger.info("ConexiÃ³n cerrada")
+

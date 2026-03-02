@@ -87,7 +87,7 @@ class TradingBot:
             # Filtrar timeframes incompatibles con el min_timeframe del símbolo
             # Solo mantener timeframes >= min_timeframe
             compatible_timeframes = set()
-            tf_order = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+            tf_order = ["M1", "M3", "M5", "M9", "M15", "M30", "H1", "H4", "D1"]
             try:
                 min_tf_idx = tf_order.index(symbol.min_timeframe)
                 for tf in required_timeframes:

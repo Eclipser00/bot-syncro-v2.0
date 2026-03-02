@@ -194,8 +194,8 @@ class Backtest:
                                                  "price_open", "price_close", "pnl", "pnl_comm", "barlen"])
             return empty_trades, pd.DataFrame(), pd.DataFrame()
 
-        # 2.1) Auto-resample para PivotZoneTest cuando solo llega data M1 en DATA_FOLDER_01.
-        #      Objetivo: permitir usar un único CSV M1 y construir TF_zone=M3 internamente.
+        # 2.1) Auto-resample para PivotZoneTest cuando solo llega un feed base.
+        #      Objetivo: construir TF_zone desde el timeframe base configurado.
         strategy_name = getattr(strategy_cls, "__name__", str(strategy_cls))
         if datas_added == 1 and strategy_name == "PivotZoneTest":
             base_feed = cerebro.datas[0]
@@ -209,7 +209,7 @@ class Backtest:
             if base_minutes <= 0:
                 base_minutes = 1.0
 
-            target_zone_minutes = 3.0
+            target_zone_minutes = float(getattr(config, "PIVOT_TF_ZONE_MINUTES", 9.0))
             compression = int(round(target_zone_minutes / base_minutes))
             if compression > 1:
                 zone_feed = cerebro.resampledata(
@@ -228,7 +228,8 @@ class Backtest:
             else:
                 _log(
                     "[Backtest][WARN] Auto-resample PivotZoneTest omitido: "
-                    f"base timeframe ~M{base_minutes:.0f} no permite generar M3 con compression>1"
+                    f"base timeframe ~M{base_minutes:.0f} no permite generar "
+                    f"M{int(round(target_zone_minutes))} con compression>1"
                 )
 
         # 3) Estrategia y parámetros

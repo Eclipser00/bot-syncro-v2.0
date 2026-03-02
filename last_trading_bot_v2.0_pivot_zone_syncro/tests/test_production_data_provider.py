@@ -16,7 +16,7 @@ class _DummyBroker:
     def get_ohlcv(self, symbol: str, timeframe: str, start: datetime, end: datetime) -> pd.DataFrame:
         self.calls += 1
         periods = 5 + self.calls  # cada llamada aÃ±ade una barra nueva
-        idx = pd.date_range(self.base_start, periods=periods, freq="1min")
+        idx = pd.date_range(self.base_start, periods=periods, freq="3min")
         data = {
             "open": [1.0] * periods,
             "high": [1.0] * periods,
@@ -37,18 +37,18 @@ def test_production_provider_accumulates_incremental_bars():
         lookback_days_zone=1,
         lookback_days_stop=1,
     )
-    symbol = SymbolConfig(name="EURUSD", min_timeframe="M1")
+    symbol = SymbolConfig(name="EURUSD", min_timeframe="M3")
 
     now = datetime(2024, 1, 1, 0, 10, tzinfo=timezone.utc)
-    data_first = provider.get_data(symbol, ["M1", "M5"], now)
-    len_first = len(data_first["M1"])
+    data_first = provider.get_data(symbol, ["M3", "M9"], now)
+    len_first = len(data_first["M3"])
 
     now_later = now + timedelta(minutes=1)
-    data_second = provider.get_data(symbol, ["M1", "M5"], now_later)
-    len_second = len(data_second["M1"])
+    data_second = provider.get_data(symbol, ["M3", "M9"], now_later)
+    len_second = len(data_second["M3"])
 
     assert len_second > len_first, "El buffer debe crecer con nuevas velas"
-    assert data_second["M1"].attrs.get("symbol") == "EURUSD"
+    assert data_second["M3"].attrs.get("symbol") == "EURUSD"
     # El resample no debe devolver mÃ¡s velas que el timeframe base
-    assert len(data_second["M5"]) <= len_second
+    assert len(data_second["M9"]) <= len_second
 

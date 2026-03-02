@@ -404,9 +404,9 @@ def test_resolve_params_applies_symbol_overrides():
     strategy = PivotZoneTestStrategy(
         name="PivotZoneTest",
         broker_client=broker,
-        tf_entry="M1",
-        tf_zone="M3",
-        tf_stop="M1",
+        tf_entry="M3",
+        tf_zone="M9",
+        tf_stop="M3",
         n1=10,
         n2=80,
         n3=4,

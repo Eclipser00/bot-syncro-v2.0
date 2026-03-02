@@ -1,5 +1,13 @@
 # Bot de trading (estado actual del repo)
 
+## Timeframes oficiales (actualizado 2026-03-02)
+- Configuracion canonical: `Entry=M3`, `Zone=M9`, `Stop=M3`.
+- En todos los entornos (`production`, `development`, `testing`):
+  - `min_timeframe` de simbolos: `M3`.
+  - `loop.timeframe_minutes`: `3`.
+  - `data.csv_base_timeframe`: `M3`.
+- El resample de `M9` se construye desde el feed base `M3` y descarta la ultima vela parcial en streaming.
+
 ## 1) Resumen ejecutivo del proyecto
 - Este repo implementa un bot de trading orientado a objetos que coordina descarga de datos OHLCV, evaluacion de riesgo, generacion de senales y ejecucion de ordenes mediante un broker. (ref: bot_trading/application/engine/bot_engine.py:TradingBot, bot_trading/infrastructure/data_fetcher.py:MarketDataService, bot_trading/application/engine/signals.py:Signal, bot_trading/application/engine/order_executor.py:OrderExecutor)
 - El entrypoint principal es `bot_trading/main.py:main()`, se ejecuta como modulo Python y lee toda la configuracion desde `config.py`. (ref: bot_trading/main.py:main, config.py)
@@ -92,7 +100,7 @@
 - Se construye el `TradingBot` con todos los componentes. (ref: bot_trading/main.py:main, bot_trading/application/engine/bot_engine.py:TradingBot)
 
 ### 4.4 Bucle principal o pipeline
-- El entrypoint ejecuta `TradingBot.run_synchronized(timeframe_minutes=1, wait_after_close=5, skip_sleep_when_simulated=settings.loop.skip_sleep_when_simulated)`. En development el flag viene en `True` (sin sleeps con CSV), en produccion sigue en `False`; puedes desactivarlo en dev si quieres la misma cadencia que live. (ref: bot_trading/main.py:main, config.py:LoopConfig, bot_trading/application/engine/bot_engine.py:TradingBot.run_synchronized)
+- El entrypoint ejecuta `TradingBot.run_synchronized(timeframe_minutes=1, wait_after_close=0, skip_sleep_when_simulated=settings.loop.skip_sleep_when_simulated)`. En development el flag viene en `True` (sin sleeps con CSV), en produccion sigue en `False`; puedes desactivarlo en dev si quieres la misma cadencia que live. (ref: bot_trading/main.py:main, config.py:LoopConfig, bot_trading/application/engine/bot_engine.py:TradingBot.run_synchronized)
 - `skip_sleep_when_simulated` controla si el loop usa los timestamps del CSV sin dormir entre ciclos (acelerado) o se sincroniza con reloj real. (ref: bot_trading/application/engine/bot_engine.py:TradingBot.run_synchronized, bot_trading/infrastructure/data_fetcher.py:DevelopmentCsvDataProvider.get_simulated_now)
 - En modo real el proveedor de datos es el broker (MT5) y en development es `DevelopmentCsvDataProvider`; el resto del flujo (riesgo, estrategias, ejecucion de ordenes) es identico. (ref: bot_trading/main.py:_build_market_data_service, bot_trading/infrastructure/data_fetcher.py:ProductionDataProvider)
 
@@ -201,14 +209,14 @@
   - logging: `level="INFO"`, `log_to_file=True`, `log_file_path="logs/production.log"`, `pivot_log_file_path="logs/pivot_zones.log"`. (ref: config.py:ENVIRONMENTS)
   - risk: `dd_global=30.0`, `dd_por_activo` EURUSD/GBPUSD/USDJPY=30.0, `dd_por_estrategia` PivotZoneTest=30.0, `initial_balance=20000.0` (default), `max_margin_usage_percent=80.0` (default). (ref: config.py:RiskConfig, config.py:ENVIRONMENTS)
   - symbols/strategies: se cargan desde `DEFAULT_SYMBOLS`/`DEFAULT_STRATEGIES` (actualmente EURUSD/GBPUSD/USDJPY en M1 con overrides por símbolo, y PivotZoneTest con M1/M3). (ref: config.py:DEFAULT_SYMBOLS, config.py:DEFAULT_STRATEGIES)
-  - loop: `timeframe_minutes=1`, `wait_after_close=5`, `skip_sleep_when_simulated=False`. (ref: config.py:ENVIRONMENTS)
+  - loop: `timeframe_minutes=1`, `wait_after_close=0`, `skip_sleep_when_simulated=False`. (ref: config.py:ENVIRONMENTS)
   - data: `data_mode="production"`, `data_development_dir="data_development"`, `bootstrap_lookback_days_zone=14`, `bootstrap_lookback_days_entry=None`, `bootstrap_lookback_days_stop=None`, `csv_base_timeframe="M1"`. (ref: config.py:ENVIRONMENTS)
 - `development`:
   - broker: `use_real_broker=False`, `max_retries=1`, `retry_delay=0.1`, `load_env_credentials=False`. (ref: config.py:ENVIRONMENTS)
   - logging: `level="DEBUG"`, `log_to_file=True`, `log_file_path="logs/development.log"`, `pivot_log_file_path="logs/pivot_zones.log"`. (ref: config.py:ENVIRONMENTS)
   - risk: mismos limites que production para activos y estrategia PivotZoneTest. (ref: config.py:ENVIRONMENTS)
   - symbols/strategies: `DEFAULT_SYMBOLS`/`DEFAULT_STRATEGIES` (iguales a producción). (ref: config.py:DEFAULT_SYMBOLS, config.py:DEFAULT_STRATEGIES)
-  - loop: `timeframe_minutes=1`, `wait_after_close=5`, `skip_sleep_when_simulated=True` por defecto (dev avanza sin sleeps; puedes ponerlo en False si quieres reloj real). (ref: config.py:ENVIRONMENTS)
+  - loop: `timeframe_minutes=1`, `wait_after_close=0`, `skip_sleep_when_simulated=True` por defecto (dev avanza sin sleeps; puedes ponerlo en False si quieres reloj real). (ref: config.py:ENVIRONMENTS)
   - data: `data_mode="development"`, `data_development_dir="data_development"`, `bootstrap_lookback_days_zone=14`, `bootstrap_lookback_days_entry=None`, `bootstrap_lookback_days_stop=None`, `csv_base_timeframe="M1"`. (ref: config.py:ENVIRONMENTS)
 - `testing`:
   - broker: `use_real_broker=False`, `max_retries=1`, `retry_delay=0.0`, `load_env_credentials=False`. (ref: config.py:ENVIRONMENTS)

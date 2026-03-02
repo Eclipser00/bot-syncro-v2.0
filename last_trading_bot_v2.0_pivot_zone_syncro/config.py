@@ -52,7 +52,7 @@ def _reexec_with_project_venv_if_needed() -> None:
 # =============================================================================
 
 # Selecciona el entorno activo: "development" (paper/FakeBroker), "production" (MT5 real) o "testing".
-ACTIVE_ENV = "development"  # entorno que usara el bot al arrancar
+ACTIVE_ENV = "production"  # entorno que usara el bot al arrancar
 
 
 # =============================================================================
@@ -173,8 +173,8 @@ class LoopConfig:
         Por defecto es False para mantener el mismo flujo que produccion.
     """
 
-    timeframe_minutes: int = 1  # tamano de vela base en minutos
-    wait_after_close: int = 5  # segundos de espera tras cierre de vela
+    timeframe_minutes: int = 3  # tamano de vela base en minutos
+    wait_after_close: int = 0  # sin espera tras cierre
     skip_sleep_when_simulated: bool = True  # omite sleep cuando se usan datos simulados CSV
 
 
@@ -189,7 +189,7 @@ class DataConfig:
     bootstrap_lookback_days_zone: int = 14  # dias hacia atras para inicializar zonas
     bootstrap_lookback_days_entry: Optional[int] = None  # override para lookback de entradas
     bootstrap_lookback_days_stop: Optional[int] = None  # override para lookback de stops
-    csv_base_timeframe: str = "M1"  # timeframe base para CSV de desarrollo
+    csv_base_timeframe: str = "M3"  # timeframe base para CSV de desarrollo
 
 
 @dataclass
@@ -217,7 +217,7 @@ class BotConfig:
 DEFAULT_SYMBOLS: List[SymbolConfigEntry] = [
     SymbolConfigEntry(
         name="EURUSD",
-        min_timeframe="M1",
+        min_timeframe="M3",
         n1=3,
         n2=100,
         n3=5,
@@ -226,7 +226,7 @@ DEFAULT_SYMBOLS: List[SymbolConfigEntry] = [
     ),
     SymbolConfigEntry(
         name="GBPUSD",
-        min_timeframe="M1",
+        min_timeframe="M3",
         n1=3,
         n2=100,
         n3=5,
@@ -235,7 +235,7 @@ DEFAULT_SYMBOLS: List[SymbolConfigEntry] = [
     ),
     SymbolConfigEntry(
         name="USDJPY",
-        min_timeframe="M1",
+        min_timeframe="M3",
         n1=3,
         n2=100,
         n3=5,
@@ -248,15 +248,15 @@ DEFAULT_STRATEGIES: List[StrategyConfig] = [
     StrategyConfig(
         name="PivotZoneTest",
         allowed_symbols=[sym.name for sym in DEFAULT_SYMBOLS],  # se recalibra en validate_config si se agregan simbolos
-        tf_entry="M1",
-        tf_zone="M3",
-        tf_stop="M1",
+        tf_entry="M3",
+        tf_zone="M9",
+        tf_stop="M3",
         n1=3,
         n2=100,
         n3=5,
         size_pct=0.05,
         p=0.50,
-        timeframes=["M1", "M3"],
+        timeframes=["M3", "M9"],
     )
 ]
 
@@ -289,8 +289,8 @@ ENVIRONMENTS: Dict[str, BotConfig] = {
         symbols=copy.deepcopy(DEFAULT_SYMBOLS),
         strategies=copy.deepcopy(DEFAULT_STRATEGIES),
         loop=LoopConfig(
-            timeframe_minutes=1,  # vela base en minutos
-            wait_after_close=5,  # segundos de espera tras cierre
+            timeframe_minutes=3,  # vela base en minutos
+            wait_after_close=0,  # sin espera tras cierre
             skip_sleep_when_simulated=False,  # en vivo se respeta el sleep
         ),
         data=DataConfig(
@@ -299,7 +299,7 @@ ENVIRONMENTS: Dict[str, BotConfig] = {
             bootstrap_lookback_days_zone=15,  # dias para inicializar zonas
             bootstrap_lookback_days_entry=None,  # hereda zona si None
             bootstrap_lookback_days_stop=None,  # hereda zona si None
-            csv_base_timeframe="M1",  # timeframe base de CSV
+            csv_base_timeframe="M3",  # timeframe base de CSV
         ),
     ),
     ################################################
@@ -330,8 +330,8 @@ ENVIRONMENTS: Dict[str, BotConfig] = {
         symbols=copy.deepcopy(DEFAULT_SYMBOLS),
         strategies=copy.deepcopy(DEFAULT_STRATEGIES),
         loop=LoopConfig(
-            timeframe_minutes=1,  # vela base en minutos
-            wait_after_close=5,  # segundos de espera tras cierre
+            timeframe_minutes=3,  # vela base en minutos
+            wait_after_close=0,  # sin espera tras cierre
             skip_sleep_when_simulated=True,  # omite sleep al simular
         ),
         data=DataConfig(
@@ -340,7 +340,7 @@ ENVIRONMENTS: Dict[str, BotConfig] = {
             bootstrap_lookback_days_zone=0,  # dias para inicializar zonas
             bootstrap_lookback_days_entry=None,  # hereda zona si None
             bootstrap_lookback_days_stop=None,  # hereda zona si None
-            csv_base_timeframe="M1",  # timeframe base de CSV
+            csv_base_timeframe="M3",  # timeframe base de CSV
         ),
     ),
     ################################################
@@ -369,7 +369,7 @@ ENVIRONMENTS: Dict[str, BotConfig] = {
         symbols=copy.deepcopy(DEFAULT_SYMBOLS),
         strategies=copy.deepcopy(DEFAULT_STRATEGIES),
         loop=LoopConfig(
-            timeframe_minutes=1,  # vela base en minutos
+            timeframe_minutes=3,  # vela base en minutos
             wait_after_close=0,  # sin espera tras cierre en tests
             skip_sleep_when_simulated=True,  # omite sleep al simular
         ),
@@ -379,7 +379,7 @@ ENVIRONMENTS: Dict[str, BotConfig] = {
             bootstrap_lookback_days_zone=0,  # dias para inicializar zonas
             bootstrap_lookback_days_entry=None,  # hereda zona si None
             bootstrap_lookback_days_stop=None,  # hereda zona si None
-            csv_base_timeframe="M1",  # timeframe base de CSV
+            csv_base_timeframe="M3",  # timeframe base de CSV
         ),
     ),
 }

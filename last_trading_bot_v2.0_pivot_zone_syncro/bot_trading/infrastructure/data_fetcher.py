@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 _TIMEFRAME_MAP = {
     "M1": "1min",
     "M3": "3min",
+    "M9": "9min",
     "M5": "5min",
     "M15": "15min",
     "M30": "30min",
@@ -28,6 +29,7 @@ _TIMEFRAME_MAP = {
 _TF_MINUTES = {
     "M1": 1,
     "M3": 3,
+    "M9": 9,
     "M5": 5,
     "M15": 15,
     "M30": 30,

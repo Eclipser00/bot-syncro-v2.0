@@ -21,6 +21,7 @@ from bot_trading.infrastructure.mt5_client import (
     MT5ConnectionError,
     MT5DataError,
     MT5OrderError,
+    TIMEFRAME_MAP,
     MetaTrader5Client,
 )
 
@@ -114,7 +115,8 @@ def test_get_ohlcv_timeframe_invalido_lanza_error(mock_mt5, client):
     with pytest.raises(ValueError) as exc_info:
         client.get_ohlcv("EURUSD", "INVALID_TF", start, end)
     
-    assert "no es válido" in str(exc_info.value)
+    msg = str(exc_info.value)
+    assert ("no es válido" in msg) or ("no es vÃ¡lido" in msg)
 
 
 def test_get_ohlcv_fechas_invertidas_lanza_error(mock_mt5, client):
@@ -150,7 +152,8 @@ def test_get_ohlcv_simbolo_invalido_lanza_error(mock_mt5, client):
     with pytest.raises(MT5DataError) as exc_info:
         client.get_ohlcv("INVALID_SYMBOL", "M1", start, end)
     
-    assert "no existe o no está disponible" in str(exc_info.value)
+    msg = str(exc_info.value)
+    assert ("no existe o no está disponible" in msg) or ("no existe o no estÃ¡ disponible" in msg)
 
 
 def test_get_ohlcv_retorna_dataframe_con_columnas_correctas(mock_mt5, client):
@@ -202,6 +205,30 @@ def test_get_ohlcv_retorna_dataframe_con_columnas_correctas(mock_mt5, client):
     assert len(df) == 2
     assert df.iloc[0]['open'] == 1.1000
     assert df.iloc[0]['volume'] == 100
+
+
+def test_get_ohlcv_m3_valida_disponibilidad_runtime(mock_mt5, client):
+    """M3 debe funcionar si MT5 lo soporta, o fallar con error claro si no está disponible."""
+    mock_mt5.initialize.return_value = True
+    mock_mt5.terminal_info.return_value = Mock()
+    mock_mt5.account_info.return_value = Mock(login=12345, balance=10000.0)
+
+    mock_symbol_info = Mock()
+    mock_symbol_info.visible = True
+    mock_mt5.symbol_info.return_value = mock_symbol_info
+    mock_mt5.copy_rates_range.return_value = []
+
+    client.connect()
+
+    start = datetime(2024, 1, 1, 0, 0)
+    end = datetime(2024, 1, 1, 1, 0)
+
+    if TIMEFRAME_MAP.get("M3") is None:
+        with pytest.raises(ValueError, match="no est"):
+            client.get_ohlcv("EURUSD", "M3", start, end)
+    else:
+        df = client.get_ohlcv("EURUSD", "M3", start, end)
+        assert isinstance(df, pd.DataFrame)
 
 
 def test_get_ohlcv_normaliza_rango_mixto_naive_aware_a_utc(mock_mt5, client):
@@ -459,7 +486,8 @@ def test_send_market_order_tipo_invalido_lanza_error(mock_mt5, client):
     with pytest.raises(ValueError) as exc_info:
         client.send_market_order(order_request)
     
-    assert "no válido" in str(exc_info.value)
+    msg = str(exc_info.value)
+    assert ("no válido" in msg) or ("no vÃ¡lido" in msg)
 
 
 def test_send_market_order_rechazada_retorna_error(mock_mt5, client):

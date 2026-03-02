@@ -1,5 +1,10 @@
 # Flujo propuesto para v6.0 (con anti-overfitting y mesetas):
 
+## Timeframes oficiales PivotZoneTest (actualizado 2026-03-02)
+- Configuracion canonical: `Entry=3 minutos`, `Zone=9 minutos`, `Stop=3 minutos`.
+- `backtest.py` aplica auto-resample dinamico para `TF_zone` usando `config.PIVOT_TF_ZONE_MINUTES` (actualmente `9`).
+- `parity_runner.py` ya no asume `M1->M3`; detecta timeframe base del CSV y genera `TF_zone` por `zone_compression`.
+
 ## Disclaimer
 
 **Todo el código de este proyecto ha sido desarrollado utilizando vibe coding (codificación asistida por IA).**

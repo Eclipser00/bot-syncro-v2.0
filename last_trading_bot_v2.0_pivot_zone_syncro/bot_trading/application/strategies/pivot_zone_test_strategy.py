@@ -41,7 +41,7 @@ else:
 logger = logging.getLogger(__name__)
 pivot_logger = logging.getLogger("pivot_zones")
 
-_TF_ORDER = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+_TF_ORDER = ["M1", "M3", "M5", "M9", "M15", "M30", "H1", "H4", "D1"]
 _EVENT_LOGGER = EventLogger(str(Path(__file__).resolve().parents[4] / "outputs" / "bot_events.jsonl"))
 
 
@@ -199,9 +199,9 @@ class PivotZoneTestStrategy:
     symbol_params: Dict[str, Dict[str, float]] = field(default_factory=dict)  # overrides por símbolo
 
     # Config multi-TF
-    tf_entry: str = "M1"
-    tf_zone: str = "M3"
-    tf_stop: str = "M1"
+    tf_entry: str = "M3"
+    tf_zone: str = "M9"
+    tf_stop: str = "M3"
 
     # Parámetros Backtrader (mantener nombres)
     n1: int = 3

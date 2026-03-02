@@ -1,17 +1,17 @@
-"""
-Runner mínimo de paridad (Backtrader) para comparar contra el live/paper bot.
+﻿"""
+Runner mÃ­nimo de paridad (Backtrader) para comparar contra el live/paper bot.
 
 Objetivo:
-  - Ejecutar PivotZoneTest sobre los mismos CSVs que usa el bot (M1),
-    resampleando internamente a M3 (TF_zone) para asemejar el pipeline del bot.
+  - Ejecutar PivotZoneTest sobre los mismos CSVs que usa el bot (timeframe base variable),
+    resampleando internamente a TF_zone usando `zone_compression`.
   - Generar `outputs/backtest_events.jsonl` (en el repo root) con `run_id`.
 
 Uso (desde el repo root):
-  python "backtest bot v6.1/parity_runner.py" --symbols EURUSD GBPUSD USDJPY
+  python "backtest bot v7.0 syncro/parity_runner.py" --symbols EURUSD GBPUSD USDJPY
 
 Variables de entorno:
   RUN_ID:            identificador del run (se escribe en cada evento)
-  EVENT_LOG_TRUNCATE: si "1", trunca el JSONL al inicializar el logger (solo primer símbolo)
+  EVENT_LOG_TRUNCATE: si "1", trunca el JSONL al inicializar el logger (solo primer sÃ­mbolo)
 """
 
 from __future__ import annotations
@@ -159,7 +159,7 @@ def _strategy_params(
     n1 = int(getattr(bt_config, "N1_RANGE", [14])[0])
     n2 = int(getattr(bt_config, "N2_RANGE", [60])[0])
     n3 = int(getattr(bt_config, "N3_RANGE", [3])[0])
-    # size_pct y p: no están en config.py del backtest; usamos defaults de la estrategia
+    # size_pct y p: no estÃ¡n en config.py del backtest; usamos defaults de la estrategia
     params: dict[str, float] = {
         "n1": float(n1),
         "n2": float(n2),
@@ -176,22 +176,34 @@ def _strategy_params(
     return params
 
 
-def _resample_m3(df_m1: pd.DataFrame, drop_last_partial: bool = False) -> pd.DataFrame:
+def _infer_base_minutes(df: pd.DataFrame) -> float:
+    if df is None or df.empty or len(df.index) < 2:
+        return 1.0
+    deltas = df.index.to_series().diff().dropna()
+    minutes = float(deltas.dt.total_seconds().median() / 60.0)
+    return minutes if minutes > 0 else 1.0
+
+
+def _tf_label(minutes: float) -> str:
+    return f"M{int(round(float(minutes)))}"
+
+
+def _resample_zone(df_base: pd.DataFrame, zone_minutes: float, drop_last_partial: bool = False) -> pd.DataFrame:
     resampled = (
-        # Semántica estándar: etiqueta de cierre (right) para evitar look-ahead en TF_zone.
-        df_m1.resample("3min", label="right", closed="right")
+        # SemÃ¡ntica estÃ¡ndar: etiqueta de cierre (right) para evitar look-ahead en TF_zone.
+        df_base.resample(f"{int(round(zone_minutes))}min", label="right", closed="right")
         .agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
         .dropna()
     )
     if drop_last_partial and len(resampled) > 0:
         try:
-            deltas = df_m1.index.to_series().diff().dropna()
+            deltas = df_base.index.to_series().diff().dropna()
             base_minutes = deltas.dt.total_seconds().median() / 60.0
             if base_minutes and base_minutes > 0:
-                expected = max(1, int(round(3.0 / float(base_minutes))))
+                expected = max(1, int(round(float(zone_minutes) / float(base_minutes))))
                 last_label = resampled.index[-1]
-                bin_start = last_label - pd.Timedelta(minutes=3.0)
-                count = df_m1[(df_m1.index > bin_start) & (df_m1.index <= last_label)].shape[0]
+                bin_start = last_label - pd.Timedelta(minutes=float(zone_minutes))
+                count = df_base[(df_base.index > bin_start) & (df_base.index <= last_label)].shape[0]
                 if count < expected:
                     resampled = resampled.iloc[:-1]
             else:
@@ -218,12 +230,16 @@ def run_symbol(
     cerebro = bt.Cerebro(stdstats=False)
     _configure_broker(cerebro)
 
-    if int(zone_compression) != 3:
-        raise ValueError("Este parity_runner solo soporta zone_compression=3 (M3) por ahora.")
+    if int(zone_compression) <= 1:
+        raise ValueError("zone_compression debe ser > 1 para construir TF_zone.")
 
-    df_m3 = _resample_m3(df, drop_last_partial=True)
+    base_minutes = _infer_base_minutes(df)
+    zone_minutes = float(base_minutes) * float(zone_compression)
+    base_label = _tf_label(base_minutes)
+    zone_label = _tf_label(zone_minutes)
+    df_zone = _resample_zone(df, zone_minutes=zone_minutes, drop_last_partial=True)
 
-    data_m1 = bt.feeds.PandasData(
+    data_base = bt.feeds.PandasData(
         dataname=df,
         open="open",
         high="high",
@@ -233,13 +249,13 @@ def run_symbol(
         datetime=None,
         timeframe=bt.TimeFrame.Minutes,
     )
-    data_m1._name = f"{symbol}_M1"
-    data_m1._symbol = symbol
-    data_m1._timeframe_label = "M1"
-    cerebro.adddata(data_m1)
+    data_base._name = f"{symbol}_{base_label}"
+    data_base._symbol = symbol
+    data_base._timeframe_label = base_label
+    cerebro.adddata(data_base)
 
-    data_m3 = bt.feeds.PandasData(
-        dataname=df_m3,
+    data_zone = bt.feeds.PandasData(
+        dataname=df_zone,
         open="open",
         high="high",
         low="low",
@@ -248,10 +264,10 @@ def run_symbol(
         datetime=None,
         timeframe=bt.TimeFrame.Minutes,
     )
-    data_m3._name = f"{symbol}_M3"
-    data_m3._symbol = symbol
-    data_m3._timeframe_label = "M3"
-    cerebro.adddata(data_m3)
+    data_zone._name = f"{symbol}_{zone_label}"
+    data_zone._symbol = symbol
+    data_zone._timeframe_label = zone_label
+    cerebro.adddata(data_zone)
 
     strategy_params = _strategy_params(symbol, bot_params_by_symbol, base_params)
     print(
@@ -268,9 +284,12 @@ def run_symbol(
         strat = results[0]
         zones = getattr(strat, "_saved_zones", None)
         zones_count = len(zones) if isinstance(zones, list) else -1
-        bars_m1 = len(df)
-        bars_m3 = len(df_m3)
-        print(f"[SUMMARY] {symbol} bars_m1={bars_m1} bars_m3={bars_m3} zones_saved={zones_count}")
+        bars_base = len(df)
+        bars_zone = len(df_zone)
+        print(
+            f"[SUMMARY] {symbol} bars_{base_label}={bars_base} "
+            f"bars_{zone_label}={bars_zone} zones_saved={zones_count}"
+        )
         if zones_count > 0:
             last = zones[-1]
             print(
@@ -282,9 +301,13 @@ def run_symbol(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Runner de paridad Backtrader (PivotZoneTest).")
-    parser.add_argument("--csv_dir", default="last_trading_bot_v1.1_pivot_zone/data_development")
+    parser.add_argument("--csv_dir", default="../last_trading_bot_v2.0_pivot_zone_syncro/data_development")
     parser.add_argument("--symbols", nargs="+", default=["EURUSD", "GBPUSD", "USDJPY"])
-    parser.add_argument("--zone_compression", type=int, default=3, help="Compresión para TF_zone (3 => M3).")
+    parser.add_argument("--zone_compression",
+        type=int,
+        default=3,
+        help="Compresión relativa para TF_zone (ej. base M3 + compresión 3 => M9).",
+    )
     parser.add_argument("--max_bars", type=int, default=0, help="Si >0, recorta cada CSV a las primeras N barras.")
     parser.add_argument(
         "--bot_config",
@@ -300,7 +323,7 @@ def main() -> None:
     bot_config_path = (
         Path(args.bot_config)
         if args.bot_config
-        else Path(__file__).resolve().parents[1] / "last_trading_bot_v1.1_pivot_zone" / "config.py"
+        else Path(__file__).resolve().parents[1] / "last_trading_bot_v2.0_pivot_zone_syncro" / "config.py"
     )
     bot_params_by_symbol, base_params = _load_bot_params(bot_config_path)
     if bot_params_by_symbol:
@@ -308,7 +331,7 @@ def main() -> None:
     else:
         print("[PARITY] Usando parametros del backtest (no se cargo config del bot).")
 
-    # Truncar solo una vez (primer símbolo) si el caller lo pide
+    # Truncar solo una vez (primer sÃ­mbolo) si el caller lo pide
     truncate = os.environ.get("EVENT_LOG_TRUNCATE") == "1"
     max_bars = int(args.max_bars) if int(args.max_bars) > 0 else None
 
@@ -327,3 +350,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
