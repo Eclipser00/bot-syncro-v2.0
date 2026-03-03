@@ -898,6 +898,27 @@ def main() -> None:
         symbols=symbols,
         market_data_callback=(auto_visualizer.on_market_data if auto_visualizer is not None else None),
     )
+
+    if settings.broker.use_real_broker:
+        reference_symbol = symbols[0].name if symbols else None
+        try:
+            clock_sync = bot.sync_clock_with_broker(
+                max_allowed_drift_seconds=2.0,
+                samples=3,
+                sample_sleep_seconds=0.2,
+                reference_symbol=reference_symbol,
+            )
+            logger.info(
+                "Reloj sincronizado con broker: offset=%.3fs residual=%.3fs samples=%d broker_time=%s",
+                clock_sync.offset.total_seconds(),
+                clock_sync.residual_seconds,
+                clock_sync.samples,
+                clock_sync.broker_time_utc.isoformat(),
+            )
+        except Exception as exc:
+            logger.error("Fallo sincronizacion de reloj con broker MT5. Arranque abortado: %s", exc, exc_info=True)
+            raise RuntimeError("No se pudo sincronizar reloj con broker MT5 al arranque.") from exc
+
     logger.info("Bot inicializado correctamente")
 
     logger.info("=" * 80)

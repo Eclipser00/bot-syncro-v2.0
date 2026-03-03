@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
+import pytest
 
 from bot_trading.application.engine.bot_engine import TradingBot
 from bot_trading.application.engine.order_executor import OrderExecutor
@@ -55,6 +56,17 @@ class DummyStrategy:
                 take_profit=None,
             )
         ]
+
+
+def _build_bot_for_clock_sync(broker) -> TradingBot:
+    return TradingBot(
+        broker_client=broker,
+        market_data_service=MarketDataService(broker),
+        risk_manager=RiskManager(RiskLimits()),
+        order_executor=OrderExecutor(broker),
+        strategies=[],
+        symbols=[SymbolConfig(name="EURUSD", min_timeframe="M1")],
+    )
 
 
 def test_trading_bot_run_once_ejecuta_flujo_basico() -> None:
@@ -163,4 +175,68 @@ def test_update_trade_history_emite_cierre_desde_trade_history_con_precio_real()
     assert position_event["reason"] == "position_close_trade_history"
     assert float(fill_event["price"]) == 1.1055
     assert float(position_event["price"]) == 1.1055
+
+
+def test_sync_clock_with_broker_aplica_offset() -> None:
+    class BrokerWithServerClock(FakeBroker):
+        def __init__(self, offset_seconds: float) -> None:
+            super().__init__()
+            self.offset_seconds = offset_seconds
+
+        def get_server_time(self, symbol: str | None = None) -> datetime:
+            return datetime.now(timezone.utc) + timedelta(seconds=self.offset_seconds)
+
+    broker = BrokerWithServerClock(offset_seconds=120.0)
+    bot = _build_bot_for_clock_sync(broker)
+
+    result = bot.sync_clock_with_broker(
+        max_allowed_drift_seconds=2.0,
+        samples=3,
+        sample_sleep_seconds=0.0,
+        reference_symbol="EURUSD",
+    )
+
+    assert abs(result.offset.total_seconds() - 120.0) < 0.5
+    assert bot.clock_offset == result.offset
+    assert result.residual_seconds <= 2.0
+
+
+def test_sync_clock_with_broker_falla_si_broker_no_expone_get_server_time() -> None:
+    broker = FakeBroker()
+    bot = _build_bot_for_clock_sync(broker)
+
+    with pytest.raises(RuntimeError, match="get_server_time"):
+        bot.sync_clock_with_broker(
+            max_allowed_drift_seconds=2.0,
+            samples=3,
+            sample_sleep_seconds=0.0,
+        )
+
+
+def test_sync_clock_with_broker_falla_si_residual_supera_umbral() -> None:
+    class BrokerWithDrift(FakeBroker):
+        def __init__(self, sample_calls: int) -> None:
+            super().__init__()
+            self.sample_calls = sample_calls
+            self.calls = 0
+
+        def get_server_time(self, symbol: str | None = None) -> datetime:
+            self.calls += 1
+            now = datetime.now(timezone.utc)
+            if self.calls <= self.sample_calls:
+                return now
+            return now + timedelta(seconds=10)
+
+    broker = BrokerWithDrift(sample_calls=3)
+    bot = _build_bot_for_clock_sync(broker)
+
+    with pytest.raises(RuntimeError, match="Desfase residual"):
+        bot.sync_clock_with_broker(
+            max_allowed_drift_seconds=2.0,
+            samples=3,
+            sample_sleep_seconds=0.0,
+            reference_symbol="EURUSD",
+        )
+
+    assert bot.clock_offset == timedelta(0)
 

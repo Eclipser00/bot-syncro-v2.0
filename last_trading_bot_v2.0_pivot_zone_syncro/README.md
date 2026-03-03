@@ -85,6 +85,8 @@
 ### 4.1 Arranque
 - El entrypoint `bot_trading/main.py:main()` configura logging y decide si usar MT5 real o `FakeBroker` segun `settings.broker.use_real_broker` en `config.py`. (ref: bot_trading/main.py:main, config.py:BrokerConfig)
 - Si `use_real_broker=True`, se crea `MetaTrader5Client` con los retries definidos y se llama a `connect()`. (ref: bot_trading/main.py:main, bot_trading/infrastructure/mt5_client.py:MetaTrader5Client.connect)
+- En `production`, tras crear `TradingBot` se ejecuta una sincronizacion de reloj con MT5 (`TradingBot.sync_clock_with_broker`): toma muestras de hora del broker, calcula `clock_offset` robusto y valida residual `<= 2s` antes de habilitar el loop. (ref: bot_trading/main.py:main, bot_trading/application/engine/bot_engine.py:TradingBot.sync_clock_with_broker)
+- Si la sincronizacion de reloj falla o el residual supera el umbral, el arranque se aborta con error para evitar operar desfasado. (ref: bot_trading/main.py:main, bot_trading/application/engine/bot_engine.py:TradingBot.sync_clock_with_broker)
 - Si `use_real_broker=False`, se crea `FakeBroker` y se llama a `connect()` (simulado). (ref: bot_trading/main.py:FakeBroker.connect)
 
 ### 4.2 Carga de configuracion (fuente de verdad actual)
@@ -254,6 +256,7 @@
 - `MetaTrader5Client.get_ohlcv()` normaliza `start/end` a UTC-aware y devuelve `DatetimeIndex` en UTC (`utc=True`). (ref: bot_trading/infrastructure/mt5_client.py:MetaTrader5Client.get_ohlcv)
 - `ProductionDataProvider` normaliza `now`, cache e incremental_start a UTC para evitar errores por mezcla naive/aware. (ref: bot_trading/infrastructure/data_fetcher.py:ProductionDataProvider.get_data)
 - `DevelopmentCsvDataProvider` usa timestamps con zona horaria UTC. (ref: bot_trading/infrastructure/data_fetcher.py:_load_csv)
+- `TradingBot` mantiene el tiempo interno en UTC-aware y aplica `clock_offset` para alinear el scheduling con la hora del broker en producción sin cambiar el modelo temporal interno. (ref: bot_trading/application/engine/bot_engine.py:TradingBot._now, bot_trading/application/engine/bot_engine.py:TradingBot.sync_clock_with_broker)
 
 ## 8) Logging / Observabilidad
 - El entrypoint aplica `LoggingConfig` de `config.py` (nivel, formato, consola y opcional archivo). (ref: config.py:LoggingConfig, bot_trading/main.py:_configure_logging)

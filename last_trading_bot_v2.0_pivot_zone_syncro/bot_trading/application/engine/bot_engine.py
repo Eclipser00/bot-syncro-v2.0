@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from statistics import median
 from typing import Callable
 
 from bot_trading.application.engine.order_executor import OrderExecutor
@@ -16,6 +18,17 @@ from bot_trading.domain.entities import OrderRequest, SymbolConfig, TradeRecord
 from bot_trading.infrastructure.data_fetcher import MarketDataService, DevelopmentCsvDataProvider
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ClockSyncResult:
+    """Resultado de sincronizacion de reloj contra el broker."""
+
+    offset: timedelta
+    residual_seconds: float
+    broker_time_utc: datetime
+    local_reference_utc: datetime
+    samples: int
 
 
 @dataclass
@@ -44,6 +57,84 @@ class TradingBot:
     def _now(self) -> datetime:
         """Devuelve la hora actual ajustada por el desfase del broker."""
         return datetime.now(timezone.utc) + self.clock_offset
+
+    @staticmethod
+    def _ensure_utc_datetime(value: datetime) -> datetime:
+        """Normaliza datetime a UTC-aware para evitar mezclas naive/aware."""
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def sync_clock_with_broker(
+        self,
+        *,
+        max_allowed_drift_seconds: float = 2.0,
+        samples: int = 3,
+        sample_sleep_seconds: float = 0.2,
+        reference_symbol: str | None = None,
+    ) -> ClockSyncResult:
+        """Sincroniza el reloj operativo del bot con la hora del broker.
+
+        Lee la hora del broker varias veces, calcula el offset con mediana para
+        reducir ruido por latencia y valida un residual final antes de aplicar.
+        """
+        if samples < 1:
+            raise ValueError("samples debe ser >= 1")
+        if max_allowed_drift_seconds < 0:
+            raise ValueError("max_allowed_drift_seconds debe ser >= 0")
+
+        get_server_time = getattr(self.broker_client, "get_server_time", None)
+        if not callable(get_server_time):
+            raise RuntimeError("El broker no implementa get_server_time()")
+
+        def _read_broker_time() -> datetime:
+            try:
+                if reference_symbol:
+                    return self._ensure_utc_datetime(get_server_time(reference_symbol))
+                return self._ensure_utc_datetime(get_server_time())
+            except TypeError:
+                # Compatibilidad con implementaciones sin parametro symbol.
+                return self._ensure_utc_datetime(get_server_time())
+            except Exception as exc:
+                raise RuntimeError(f"No se pudo leer hora del broker: {exc}") from exc
+
+        offsets_seconds: list[float] = []
+        broker_now_utc = datetime.now(timezone.utc)
+        for idx in range(samples):
+            local_before = datetime.now(timezone.utc)
+            broker_now_utc = _read_broker_time()
+            local_after = datetime.now(timezone.utc)
+            local_midpoint = local_before + (local_after - local_before) / 2
+            offsets_seconds.append((broker_now_utc - local_midpoint).total_seconds())
+            if sample_sleep_seconds > 0 and idx < samples - 1:
+                time.sleep(sample_sleep_seconds)
+
+        offset_seconds = float(median(offsets_seconds))
+        candidate_offset = timedelta(seconds=offset_seconds)
+
+        validation_local_before = datetime.now(timezone.utc)
+        broker_validation_utc = _read_broker_time()
+        validation_local_after = datetime.now(timezone.utc)
+        validation_local_midpoint = validation_local_before + (
+            validation_local_after - validation_local_before
+        ) / 2
+        residual_seconds = abs(
+            (broker_validation_utc - (validation_local_midpoint + candidate_offset)).total_seconds()
+        )
+        if residual_seconds > max_allowed_drift_seconds:
+            raise RuntimeError(
+                "Desfase residual con broker fuera de umbral: "
+                f"{residual_seconds:.3f}s > {max_allowed_drift_seconds:.3f}s"
+            )
+
+        self.clock_offset = candidate_offset
+        return ClockSyncResult(
+            offset=candidate_offset,
+            residual_seconds=residual_seconds,
+            broker_time_utc=broker_validation_utc,
+            local_reference_utc=validation_local_midpoint,
+            samples=samples,
+        )
 
     def run_once(self, now: datetime | None = None) -> None:
         """Ejecuta un ciclo completo del bot una sola vez."""
@@ -373,8 +464,6 @@ class TradingBot:
                         )
     def run_forever(self, sleep_seconds: int = 60) -> None:
         """Ejecuta el bot en bucle infinito con pausas."""
-        import time
-
         while True:
             self.run_once()
             time.sleep(sleep_seconds)
@@ -410,8 +499,6 @@ class TradingBot:
             - Espera 5 seg después de cada cierre
             - Ejecuta run_once()
         """
-        import time
-        
         logger.info("="*80)
         logger.info("Iniciando bucle sincronizado con velas de %d minutos", timeframe_minutes)
         logger.info("Esperando %d segundos después del cierre de cada vela", wait_after_close)
