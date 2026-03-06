@@ -39,9 +39,13 @@ def mock_mt5():
 
 
 @pytest.fixture
-def client():
+def client(tmp_path):
     """Fixture que proporciona un cliente MT5."""
-    return MetaTrader5Client(max_retries=3, retry_delay=0.1)
+    return MetaTrader5Client(
+        max_retries=3,
+        retry_delay=0.1,
+        closed_trades_cursor_path=str(tmp_path / "closed_trades_cursor.json"),
+    )
 
 
 # =============================================================================
@@ -755,6 +759,296 @@ def test_get_closed_trades_construye_trades_completos(mock_mt5, client):
     assert trades[0].exit_price == 1.1050
     assert trades[0].pnl == 50.0
     assert trades[0].size == 0.1
+
+
+def test_get_closed_trades_consulta_history_con_datetimes_utc_aware(mock_mt5, client):
+    """history_deals_get debe recibir rango UTC-aware en get_closed_trades."""
+    mock_mt5.initialize.return_value = True
+    mock_mt5.terminal_info.return_value = Mock()
+    mock_mt5.account_info.return_value = Mock(login=12345, balance=10000.0)
+    mock_mt5.DEAL_ENTRY_IN = 0
+    mock_mt5.DEAL_ENTRY_OUT = 1
+
+    symbol_info = Mock()
+    symbol_info.visible = True
+    mock_mt5.symbol_info.return_value = symbol_info
+    mock_mt5.symbol_info_tick.return_value = Mock(time=int(datetime(2026, 3, 5, 8, 0, tzinfo=timezone.utc).timestamp()))
+
+    captured: dict[str, datetime] = {}
+
+    def _history_deals_get(*args, **kwargs):
+        if args:
+            captured["from"] = args[0]
+            captured["to"] = args[1]
+        return []
+
+    mock_mt5.history_deals_get.side_effect = _history_deals_get
+    client.connect()
+
+    _ = client.get_closed_trades()
+
+    assert "from" in captured and "to" in captured
+    assert captured["from"].tzinfo is not None
+    assert captured["to"].tzinfo is not None
+    assert captured["from"].utcoffset() == timezone.utc.utcoffset(captured["from"])
+    assert captured["to"].utcoffset() == timezone.utc.utcoffset(captured["to"])
+
+
+def test_get_closed_trades_reconstruye_trade_cross_day(mock_mt5, client):
+    """IN en dia D y OUT en D+1 debe reconstruir trade completo."""
+    mock_mt5.initialize.return_value = True
+    mock_mt5.terminal_info.return_value = Mock()
+    mock_mt5.account_info.return_value = Mock(login=12345, balance=10000.0)
+    mock_mt5.DEAL_ENTRY_IN = 0
+    mock_mt5.DEAL_ENTRY_OUT = 1
+
+    symbol_info = Mock()
+    symbol_info.visible = True
+    mock_mt5.symbol_info.return_value = symbol_info
+    mock_mt5.symbol_info_tick.return_value = Mock(time=int(datetime(2026, 3, 5, 8, 0, tzinfo=timezone.utc).timestamp()))
+
+    mock_deal_in = Mock()
+    mock_deal_in.position_id = 55560004296
+    mock_deal_in.ticket = 101
+    mock_deal_in.entry = 0
+    mock_deal_in.symbol = "EURUSD"
+    mock_deal_in.magic = 99001
+    mock_deal_in.comment = "PivotZoneTest-M3"
+    mock_deal_in.time = int(datetime(2026, 3, 4, 12, 9, 1, tzinfo=timezone.utc).timestamp())
+    mock_deal_in.price = 1.08450
+    mock_deal_in.volume = 0.20
+
+    mock_deal_out = Mock()
+    mock_deal_out.position_id = 55560004296
+    mock_deal_out.ticket = 202
+    mock_deal_out.entry = 1
+    mock_deal_out.symbol = "EURUSD"
+    mock_deal_out.magic = 99001
+    mock_deal_out.comment = "PivotZoneTest-M3"
+    mock_deal_out.time = int(datetime(2026, 3, 5, 6, 29, 37, tzinfo=timezone.utc).timestamp())
+    mock_deal_out.price = 1.08200
+    mock_deal_out.volume = 0.20
+    mock_deal_out.profit = -50.0
+
+    mock_mt5.history_deals_get.return_value = [mock_deal_in, mock_deal_out]
+    client.connect()
+
+    trades = client.get_closed_trades()
+
+    assert len(trades) == 1
+    trade = trades[0]
+    assert trade.position_id == 55560004296
+    assert trade.entry_deal_ticket == 101
+    assert trade.exit_deal_ticket == 202
+    assert trade.entry_time == datetime(2026, 3, 4, 12, 9, 1, tzinfo=timezone.utc)
+    assert trade.exit_time == datetime(2026, 3, 5, 6, 29, 37, tzinfo=timezone.utc)
+
+
+def test_get_closed_trades_snapshot_consulta_rango_aware_y_no_muta_cursor(mock_mt5, client, tmp_path):
+    """Snapshot historico debe consultar UTC-aware y no persistir cursor."""
+    mock_mt5.initialize.return_value = True
+    mock_mt5.terminal_info.return_value = Mock()
+    mock_mt5.account_info.return_value = Mock(login=12345, balance=10000.0)
+    mock_mt5.DEAL_ENTRY_IN = 0
+    mock_mt5.DEAL_ENTRY_OUT = 1
+
+    captured: dict[str, datetime] = {}
+
+    def _history_deals_get(*args, **kwargs):
+        if args:
+            captured["from"] = args[0]
+            captured["to"] = args[1]
+        return []
+
+    mock_mt5.history_deals_get.side_effect = _history_deals_get
+    client.connect()
+
+    from_utc = datetime(2026, 3, 1, 0, 0, tzinfo=timezone.utc)
+    to_utc = datetime(2026, 3, 5, 0, 0, tzinfo=timezone.utc)
+    trades = client.get_closed_trades_snapshot(from_utc, to_utc)
+
+    assert trades == []
+    assert captured["from"].tzinfo is not None
+    assert captured["to"].tzinfo is not None
+    assert client._closed_trades_cursor_time_utc is None
+    assert client._closed_trades_cursor_ticket == 0
+    assert not (tmp_path / "closed_trades_cursor.json").exists()
+
+
+def test_get_closed_trades_snapshot_reconstruye_cross_day_con_fallback(mock_mt5, client):
+    """Snapshot debe reconstruir OUT sin IN en ventana usando fallback por position_id."""
+    mock_mt5.initialize.return_value = True
+    mock_mt5.terminal_info.return_value = Mock()
+    mock_mt5.account_info.return_value = Mock(login=12345, balance=10000.0)
+    mock_mt5.DEAL_ENTRY_IN = 0
+    mock_mt5.DEAL_ENTRY_OUT = 1
+
+    position_id = 987654321
+    mock_deal_in = Mock()
+    mock_deal_in.position_id = position_id
+    mock_deal_in.ticket = 811
+    mock_deal_in.entry = 0
+    mock_deal_in.symbol = "EURUSD"
+    mock_deal_in.magic = 99001
+    mock_deal_in.comment = "PivotZoneTest-M3"
+    mock_deal_in.time = int(datetime(2026, 3, 4, 12, 9, 1, tzinfo=timezone.utc).timestamp())
+    mock_deal_in.price = 1.08450
+    mock_deal_in.volume = 0.20
+
+    mock_deal_out = Mock()
+    mock_deal_out.position_id = position_id
+    mock_deal_out.ticket = 812
+    mock_deal_out.entry = 1
+    mock_deal_out.symbol = "EURUSD"
+    mock_deal_out.magic = 99001
+    mock_deal_out.comment = "PivotZoneTest-M3"
+    mock_deal_out.time = int(datetime(2026, 3, 5, 6, 29, 37, tzinfo=timezone.utc).timestamp())
+    mock_deal_out.price = 1.08200
+    mock_deal_out.volume = 0.20
+    mock_deal_out.profit = -50.0
+
+    def _history_deals_get(*args, **kwargs):
+        if "position" in kwargs:
+            return [mock_deal_in, mock_deal_out]
+        return [mock_deal_out]
+
+    mock_mt5.history_deals_get.side_effect = _history_deals_get
+    client.connect()
+
+    from_utc = datetime(2026, 3, 5, 0, 0, tzinfo=timezone.utc)
+    to_utc = datetime(2026, 3, 6, 0, 0, tzinfo=timezone.utc)
+    trades = client.get_closed_trades_snapshot(from_utc, to_utc)
+
+    assert len(trades) == 1
+    assert trades[0].entry_deal_ticket == 811
+    assert trades[0].exit_deal_ticket == 812
+    assert client._closed_trades_cursor_time_utc is None
+
+
+def test_get_closed_trades_out_sin_in_en_ventana_recupera_entry_por_position_id(mock_mt5, client):
+    """Si llega OUT sin IN en ventana, fallback por position_id debe recuperar IN."""
+    mock_mt5.initialize.return_value = True
+    mock_mt5.terminal_info.return_value = Mock()
+    mock_mt5.account_info.return_value = Mock(login=12345, balance=10000.0)
+    mock_mt5.DEAL_ENTRY_IN = 0
+    mock_mt5.DEAL_ENTRY_OUT = 1
+
+    symbol_info = Mock()
+    symbol_info.visible = True
+    mock_mt5.symbol_info.return_value = symbol_info
+    mock_mt5.symbol_info_tick.return_value = Mock(time=int(datetime(2026, 3, 5, 8, 0, tzinfo=timezone.utc).timestamp()))
+
+    position_id = 55560004296
+
+    mock_deal_in = Mock()
+    mock_deal_in.position_id = position_id
+    mock_deal_in.ticket = 301
+    mock_deal_in.entry = 0
+    mock_deal_in.symbol = "EURUSD"
+    mock_deal_in.magic = 99001
+    mock_deal_in.comment = "PivotZoneTest-M3"
+    mock_deal_in.time = int(datetime(2026, 3, 4, 12, 9, 1, tzinfo=timezone.utc).timestamp())
+    mock_deal_in.price = 1.08450
+    mock_deal_in.volume = 0.20
+
+    mock_deal_out = Mock()
+    mock_deal_out.position_id = position_id
+    mock_deal_out.ticket = 302
+    mock_deal_out.entry = 1
+    mock_deal_out.symbol = "EURUSD"
+    mock_deal_out.magic = 99001
+    mock_deal_out.comment = "PivotZoneTest-M3"
+    mock_deal_out.time = int(datetime(2026, 3, 5, 6, 29, 37, tzinfo=timezone.utc).timestamp())
+    mock_deal_out.price = 1.08200
+    mock_deal_out.volume = 0.20
+    mock_deal_out.profit = -50.0
+
+    def _history_deals_get(*args, **kwargs):
+        if "position" in kwargs:
+            return [mock_deal_in, mock_deal_out]
+        return [mock_deal_out]
+
+    mock_mt5.history_deals_get.side_effect = _history_deals_get
+    client.connect()
+
+    trades = client.get_closed_trades()
+
+    assert len(trades) == 1
+    assert trades[0].entry_deal_ticket == 301
+    assert trades[0].exit_deal_ticket == 302
+
+
+def test_get_closed_trades_cursor_persistente_evita_duplicados_tras_reinicio(mock_mt5, tmp_path):
+    """Con cursor persistente, reiniciar cliente no debe duplicar cierres ya emitidos."""
+    cursor_path = tmp_path / "closed_trades_cursor.json"
+
+    mock_mt5.initialize.return_value = True
+    mock_mt5.terminal_info.return_value = Mock()
+    mock_mt5.account_info.return_value = Mock(login=12345, balance=10000.0)
+    mock_mt5.DEAL_ENTRY_IN = 0
+    mock_mt5.DEAL_ENTRY_OUT = 1
+
+    symbol_info = Mock()
+    symbol_info.visible = True
+    mock_mt5.symbol_info.return_value = symbol_info
+    mock_mt5.symbol_info_tick.return_value = Mock(time=int(datetime(2026, 3, 5, 8, 0, tzinfo=timezone.utc).timestamp()))
+
+    mock_deal_in = Mock(
+        position_id=777001,
+        ticket=4001,
+        entry=0,
+        symbol="EURUSD",
+        magic=99001,
+        comment="PivotZoneTest-M3",
+        time=int(datetime(2026, 3, 5, 1, 0, tzinfo=timezone.utc).timestamp()),
+        price=1.0800,
+        volume=0.10,
+    )
+    mock_deal_out = Mock(
+        position_id=777001,
+        ticket=4002,
+        entry=1,
+        symbol="EURUSD",
+        magic=99001,
+        comment="PivotZoneTest-M3",
+        time=int(datetime(2026, 3, 5, 2, 0, tzinfo=timezone.utc).timestamp()),
+        price=1.0810,
+        volume=0.10,
+        profit=10.0,
+    )
+    mock_mt5.history_deals_get.return_value = [mock_deal_in, mock_deal_out]
+
+    client_1 = MetaTrader5Client(
+        max_retries=3,
+        retry_delay=0.1,
+        closed_trades_cursor_path=str(cursor_path),
+    )
+    client_1.connect()
+    trades_1 = client_1.get_closed_trades()
+
+    client_2 = MetaTrader5Client(
+        max_retries=3,
+        retry_delay=0.1,
+        closed_trades_cursor_path=str(cursor_path),
+    )
+    client_2.connect()
+    trades_2 = client_2.get_closed_trades()
+
+    assert len(trades_1) == 1
+    assert trades_2 == []
+    assert cursor_path.exists()
+
+
+def test_strict_utc_mode_normaliza_naive_y_emite_warning(mock_mt5, client, caplog):
+    """Modo UTC estricto debe normalizar datetime naive y dejar warning en logs."""
+    naive_dt = datetime(2026, 3, 5, 6, 29, 37)
+
+    with caplog.at_level("WARNING"):
+        normalized = client._ensure_utc_datetime(naive_dt, caller="test_strict_mode")
+
+    assert normalized.tzinfo is not None
+    assert normalized.utcoffset() == timezone.utc.utcoffset(normalized)
+    assert "Datetime naive detectado y normalizado a UTC" in caplog.text
 
 
 # =============================================================================

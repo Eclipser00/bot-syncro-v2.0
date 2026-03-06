@@ -29,6 +29,35 @@ class OrderExecutor:
         except Exception:
             pass
 
+    @staticmethod
+    def _ensure_utc_datetime(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def _now_utc(self) -> datetime:
+        get_server_time = getattr(self.broker_client, "get_server_time", None)
+        if callable(get_server_time):
+            try:
+                return self._ensure_utc_datetime(get_server_time())
+            except TypeError:
+                try:
+                    return self._ensure_utc_datetime(get_server_time(None))
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        return datetime.now(timezone.utc)
+
+    def _normalize_ts_event(self, ts_event: str | None, *, fallback_now: datetime | None = None) -> str:
+        if ts_event:
+            try:
+                parsed = datetime.fromisoformat(str(ts_event).replace("Z", "+00:00"))
+                return self._ensure_utc_datetime(parsed).isoformat()
+            except Exception:
+                logger.warning("ts_event invalido, usando fallback UTC: %s", ts_event)
+        return self._ensure_utc_datetime(fallback_now or self._now_utc()).isoformat()
+
     def _resolve_fill_price(self, order_request: OrderRequest, result: OrderResult) -> float:
         """Obtiene el mejor precio disponible para eventos de fill."""
         if result.fill_price is not None and float(result.fill_price) > 0.0:
@@ -80,7 +109,7 @@ class OrderExecutor:
         # Evento de env?o de orden (instrumentaci?n de paridad)
         self._emit_event({
             'event_type': 'order_submit',
-            'ts_event': order_request.ts_event or datetime.now(timezone.utc).isoformat(),
+            'ts_event': self._normalize_ts_event(order_request.ts_event),
             'bar_index': order_request.bar_index if order_request.bar_index is not None else -1,
             'symbol': order_request.symbol,
             'timeframe': order_request.timeframe if order_request.timeframe is not None else '',
@@ -110,7 +139,7 @@ class OrderExecutor:
             else:
                 self._emit_event({
                     'event_type': 'order_fill',
-                    'ts_event': order_request.ts_event or datetime.now(timezone.utc).isoformat(),
+                    'ts_event': self._normalize_ts_event(order_request.ts_event),
                     'bar_index': order_request.bar_index if order_request.bar_index is not None else -1,
                     'symbol': order_request.symbol,
                     'timeframe': order_request.timeframe if order_request.timeframe is not None else '',
@@ -156,7 +185,7 @@ class OrderExecutor:
                     break
             if order_req is None:
                 continue
-            ts_event = (now or datetime.now(timezone.utc)).isoformat()
+            ts_event = self._normalize_ts_event(None, fallback_now=now)
             bar_index = order_req.bar_index + 1 if order_req.bar_index is not None else -1
             price_fill = getattr(fill, "price", None)
             price_val = float(price_fill) if price_fill is not None else getattr(self.broker_client, '_last_price', {}).get(order_req.symbol, 0.0)
@@ -218,7 +247,7 @@ class OrderExecutor:
             )
             self._emit_event({
                 'event_type': 'position',
-                'ts_event': ts_event or datetime.now(timezone.utc).isoformat(),
+                'ts_event': self._normalize_ts_event(ts_event),
                 'bar_index': bar_index if bar_index is not None else -1,
                 'symbol': symbol,
                 'timeframe': timeframe if timeframe is not None else (4 if getattr(self.broker_client, '_last_price', None) is not None else ''),
@@ -246,7 +275,7 @@ class OrderExecutor:
             stop_loss=order_request.stop_loss,
             take_profit=order_request.take_profit,
             strategy_name=order_request.comment or "unknown",
-            open_time=datetime.now(timezone.utc),
+            open_time=self._now_utc(),
             magic_number=order_request.magic_number,
         )
         # Usar símbolo + magic_number como clave para consistencia
@@ -260,7 +289,7 @@ class OrderExecutor:
         )
         self._emit_event({
             'event_type': 'position',
-            'ts_event': order_request.ts_event or datetime.now(timezone.utc).isoformat(),
+            'ts_event': self._normalize_ts_event(order_request.ts_event),
             'bar_index': order_request.bar_index if order_request.bar_index is not None else -1,
             'symbol': order_request.symbol,
             'timeframe': order_request.timeframe if order_request.timeframe is not None else '',

@@ -15,10 +15,12 @@ Esta implementaciÃ³n incluye:
 """
 from __future__ import annotations
 
+import json
 import logging
 import math
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional, Protocol
 
 import MetaTrader5 as mt5
@@ -172,7 +174,17 @@ class MetaTrader5Client:
         _symbol_info_cache: Cache de informaciÃ³n de sÃ­mbolos para optimizar consultas.
     """
 
-    def __init__(self, max_retries: int = 3, retry_delay: float = 1.0) -> None:
+    def __init__(
+        self,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        *,
+        strict_utc_mode: bool = True,
+        closed_trades_cursor_path: str = "outputs/closed_trades_cursor.json",
+        closed_trades_overlap_minutes: int = 10,
+        closed_trades_initial_lookback_hours: int = 72,
+        closed_trades_entry_fallback_days: int = 7,
+    ) -> None:
         """Inicializa el cliente MT5.
 
         Args:
@@ -183,9 +195,23 @@ class MetaTrader5Client:
         self.max_retries: int = max_retries
         self.retry_delay: float = retry_delay
         self._symbol_info_cache: dict = {}
-        
-        logger.info("MetaTrader5Client inicializado con max_retries=%d, retry_delay=%.2f", 
-                    max_retries, retry_delay)
+        self.strict_utc_mode: bool = bool(strict_utc_mode)
+        self.closed_trades_overlap_minutes: int = max(0, int(closed_trades_overlap_minutes))
+        self.closed_trades_initial_lookback_hours: int = max(1, int(closed_trades_initial_lookback_hours))
+        self.closed_trades_entry_fallback_days: int = max(1, int(closed_trades_entry_fallback_days))
+        self._closed_trades_cursor_path: Path = self._resolve_runtime_path(closed_trades_cursor_path)
+        self._closed_trades_cursor_time_utc: datetime | None = None
+        self._closed_trades_cursor_ticket: int = 0
+        self._closed_trade_dedupe_keys: set[tuple[int, int]] = set()
+        self._load_closed_trades_cursor()
+
+        logger.info(
+            "MetaTrader5Client inicializado max_retries=%d retry_delay=%.2f strict_utc_mode=%s cursor=%s",
+            max_retries,
+            retry_delay,
+            self.strict_utc_mode,
+            self._closed_trades_cursor_path,
+        )
 
     def connect(self) -> None:
         """Inicializa la conexiÃ³n con MetaTrader5.
@@ -236,12 +262,27 @@ class MetaTrader5Client:
             self.connected = False
             self.connect()
 
-    @staticmethod
-    def _ensure_utc_datetime(value: datetime) -> datetime:
+    def _ensure_utc_datetime(self, value: datetime, *, caller: str | None = None) -> datetime:
         """Normaliza datetime a UTC-aware para evitar mezclas naive/aware."""
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
+            normalized = value.replace(tzinfo=timezone.utc)
+            if self.strict_utc_mode:
+                logger.warning(
+                    "Datetime naive detectado y normalizado a UTC caller=%s value=%s normalized=%s",
+                    caller or "unknown",
+                    value.isoformat(),
+                    normalized.isoformat(),
+                )
+            return normalized
         return value.astimezone(timezone.utc)
+
+    @staticmethod
+    def _resolve_runtime_path(path_value: str) -> Path:
+        path = Path(path_value)
+        if path.is_absolute():
+            return path
+        repo_root = Path(__file__).resolve().parents[2]
+        return (repo_root / path).resolve()
 
     def get_server_time(self, symbol: Optional[str] = None) -> datetime:
         """Obtiene la hora del servidor MT5 (timezone UTC)."""
@@ -262,6 +303,138 @@ class MetaTrader5Client:
         # Fallback seguro: hora local UTC si no se pudo obtener
         logger.warning("No se pudo obtener hora del servidor; usando reloj local UTC")
         return datetime.now(timezone.utc)
+
+    def _now_broker_utc(self, symbol: Optional[str] = None) -> datetime:
+        """Obtiene 'ahora' en UTC priorizando hora del servidor MT5."""
+        try:
+            return self._ensure_utc_datetime(
+                self.get_server_time(symbol),
+                caller="MetaTrader5Client._now_broker_utc",
+            )
+        except Exception as exc:
+            logger.warning("No se pudo obtener hora del broker, usando reloj local UTC: %s", exc)
+            return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _deal_ticket(deal: object) -> int:
+        try:
+            return int(getattr(deal, "ticket", 0) or 0)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _safe_float(value: object, default: float = 0.0) -> float:
+        try:
+            if value is None:
+                return float(default)
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _deal_time_utc(self, deal: object) -> datetime:
+        deal_timestamp = float(getattr(deal, "time", 0) or 0)
+        return self._ensure_utc_datetime(
+            datetime.fromtimestamp(deal_timestamp, tz=timezone.utc),
+            caller="MetaTrader5Client._deal_time_utc",
+        )
+
+    def _load_closed_trades_cursor(self) -> None:
+        path = self._closed_trades_cursor_path
+        if not path.exists():
+            return
+
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            ts_raw = payload.get("cursor_time_utc")
+            ticket_raw = payload.get("cursor_ticket", 0)
+            if not ts_raw:
+                return
+            ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+            self._closed_trades_cursor_time_utc = self._ensure_utc_datetime(
+                ts,
+                caller="MetaTrader5Client._load_closed_trades_cursor",
+            )
+            self._closed_trades_cursor_ticket = int(ticket_raw or 0)
+            logger.info(
+                "Cursor de cierres cargado time=%s ticket=%s",
+                self._closed_trades_cursor_time_utc.isoformat(),
+                self._closed_trades_cursor_ticket,
+            )
+        except Exception as exc:
+            logger.warning("No se pudo cargar cursor de cierres (%s): %s", path, exc)
+
+    def _save_closed_trades_cursor(self) -> None:
+        if self._closed_trades_cursor_time_utc is None:
+            return
+        try:
+            self._closed_trades_cursor_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "cursor_time_utc": self._closed_trades_cursor_time_utc.isoformat(),
+                "cursor_ticket": int(self._closed_trades_cursor_ticket),
+                "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+            }
+            self._closed_trades_cursor_path.write_text(
+                json.dumps(payload, ensure_ascii=True, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.warning("No se pudo persistir cursor de cierres (%s): %s", self._closed_trades_cursor_path, exc)
+
+    def _fetch_deals_by_position(
+        self,
+        *,
+        position_id: int,
+        from_utc: datetime,
+        to_utc: datetime,
+        deal_entry_in: int,
+        deal_entry_out: int,
+    ) -> list:
+        """Recupera deals de una posicion para reconstruccion cross-day."""
+        all_deals = []
+
+        try:
+            deals_by_position = mt5.history_deals_get(position=position_id)
+            if deals_by_position:
+                all_deals = list(deals_by_position)
+        except TypeError:
+            all_deals = []
+        except Exception:
+            all_deals = []
+
+        if not all_deals:
+            range_deals = mt5.history_deals_get(from_utc, to_utc)
+            all_deals = list(range_deals) if range_deals else []
+
+        filtered = []
+        for deal in all_deals:
+            try:
+                if int(getattr(deal, "position_id", 0) or 0) != position_id:
+                    continue
+                if getattr(deal, "entry", None) not in (deal_entry_in, deal_entry_out):
+                    continue
+                filtered.append(deal)
+            except Exception:
+                continue
+
+        filtered.sort(key=lambda d: (self._deal_time_utc(d), self._deal_ticket(d)))
+        return filtered
+
+    def _select_entry_for_exit(self, entry_deals: list, exit_deal: object) -> object | None:
+        """Selecciona el entry mas cercano previo al exit deal."""
+        if not entry_deals:
+            return None
+        exit_time = self._deal_time_utc(exit_deal)
+        exit_ticket = self._deal_ticket(exit_deal)
+        candidates = []
+        for deal in entry_deals:
+            deal_time = self._deal_time_utc(deal)
+            deal_ticket = self._deal_ticket(deal)
+            if deal_time < exit_time or (deal_time == exit_time and deal_ticket <= exit_ticket):
+                candidates.append(deal)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda d: (self._deal_time_utc(d), self._deal_ticket(d)))
+        return candidates[-1]
 
     def _get_symbol_info(self, symbol: str) -> mt5.SymbolInfo:
         """Obtiene informaciÃ³n del sÃ­mbolo con cache.
@@ -608,8 +781,8 @@ class MetaTrader5Client:
             MT5DataError: Si hay error al descargar los datos.
             ValueError: Si los parÃ¡metros no son vÃ¡lidos.
         """
-        start_utc = self._ensure_utc_datetime(start)
-        end_utc = self._ensure_utc_datetime(end)
+        start_utc = self._ensure_utc_datetime(start, caller="MetaTrader5Client.get_ohlcv.start")
+        end_utc = self._ensure_utc_datetime(end, caller="MetaTrader5Client.get_ohlcv.end")
         logger.info("Descargando OHLCV para %s, timeframe=%s, desde %s hasta %s",
                    symbol, timeframe, start_utc, end_utc)
         
@@ -1253,109 +1426,246 @@ class MetaTrader5Client:
         return result
 
     def get_closed_trades(self) -> list[TradeRecord]:
-        """Recupera los trades cerrados recientes.
-
-        Consulta el historial de deals para construir trades completos
-        (entrada + salida) y calcular el PnL.
-
-        Returns:
-            Lista de objetos TradeRecord con los trades cerrados.
-
-        Raises:
-            MT5ConnectionError: Si no hay conexiÃ³n activa.
-        """
+        """Recupera los trades cerrados recientes."""
         logger.info("Consultando trades cerrados...")
-        
-        # Verificar conexiÃ³n
         self._ensure_connected()
-        
-        # Obtener historial de deals (Ãºltimas 24 horas por defecto)
-        from_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        to_date = datetime.now()
-        
-        logger.debug("Consultando deals desde %s hasta %s", from_date, to_date)
-        
-        deals = mt5.history_deals_get(from_date, to_date)
-        
+
+        to_utc = self._now_broker_utc()
+        if self._closed_trades_cursor_time_utc is None:
+            from_utc = to_utc - timedelta(hours=self.closed_trades_initial_lookback_hours)
+        else:
+            from_utc = self._closed_trades_cursor_time_utc - timedelta(
+                minutes=self.closed_trades_overlap_minutes
+            )
+
+        from_utc = self._ensure_utc_datetime(
+            from_utc,
+            caller="MetaTrader5Client.get_closed_trades.from_utc",
+        )
+        to_utc = self._ensure_utc_datetime(
+            to_utc,
+            caller="MetaTrader5Client.get_closed_trades.to_utc",
+        )
+        if from_utc >= to_utc:
+            from_utc = to_utc - timedelta(minutes=max(self.closed_trades_overlap_minutes, 1))
+
+        logger.info(
+            "CLOSED_TRADES_QUERY range_utc=%s..%s cursor_time=%s cursor_ticket=%s",
+            from_utc.isoformat(),
+            to_utc.isoformat(),
+            self._closed_trades_cursor_time_utc.isoformat() if self._closed_trades_cursor_time_utc else "none",
+            self._closed_trades_cursor_ticket,
+        )
+        return self._collect_closed_trades(
+            from_utc=from_utc,
+            to_utc=to_utc,
+            apply_cursor_filter=True,
+            update_cursor=True,
+            persist_dedupe=True,
+            log_prefix="CLOSED_TRADES",
+        )
+
+    def get_closed_trades_snapshot(self, from_utc: datetime, to_utc: datetime) -> list[TradeRecord]:
+        """Recupera snapshot de trades cerrados en rango UTC-aware, sin usar cursor."""
+        logger.info("Consultando snapshot de trades cerrados...")
+        self._ensure_connected()
+
+        from_utc = self._ensure_utc_datetime(
+            from_utc,
+            caller="MetaTrader5Client.get_closed_trades_snapshot.from_utc",
+        )
+        to_utc = self._ensure_utc_datetime(
+            to_utc,
+            caller="MetaTrader5Client.get_closed_trades_snapshot.to_utc",
+        )
+        if from_utc >= to_utc:
+            logger.info(
+                "CLOSED_TRADES_SNAPSHOT_RESULT deals_found=0 trading_deals=0 trades_complete=0 range_invalid=1"
+            )
+            return []
+
+        logger.info(
+            "CLOSED_TRADES_SNAPSHOT_QUERY range_utc=%s..%s",
+            from_utc.isoformat(),
+            to_utc.isoformat(),
+        )
+        return self._collect_closed_trades(
+            from_utc=from_utc,
+            to_utc=to_utc,
+            apply_cursor_filter=False,
+            update_cursor=False,
+            persist_dedupe=False,
+            log_prefix="CLOSED_TRADES_SNAPSHOT",
+        )
+
+    def _collect_closed_trades(
+        self,
+        *,
+        from_utc: datetime,
+        to_utc: datetime,
+        apply_cursor_filter: bool,
+        update_cursor: bool,
+        persist_dedupe: bool,
+        log_prefix: str,
+    ) -> list[TradeRecord]:
+        """Consulta deals en rango y reconstruye trades completos IN/OUT."""
+        deals = mt5.history_deals_get(from_utc, to_utc)
         if deals is None:
             error_code, error_msg = mt5.last_error()
-            logger.error("Error al consultar historial. CÃ³digo: %d, Mensaje: %s",
-                        error_code, error_msg)
-            return []
-        
-        if len(deals) == 0:
-            logger.info("No hay trades cerrados en el rango consultado")
-            return []
-        
-        logger.info("Encontrados %d deals en el historial", len(deals))
-        
-        # Agrupar deals por posiciÃ³n para construir trades completos
-        trades_dict = {}
-        
-        for deal in deals:
-            # Ignorar deals de balance, comisiones, etc.
-            if deal.entry not in [mt5.DEAL_ENTRY_IN, mt5.DEAL_ENTRY_OUT]:
-                continue
-            
-            position_id = deal.position_id
-            
-            if position_id not in trades_dict:
-                trades_dict[position_id] = {
-                    'entry': None,
-                    'exit': None,
-                    'symbol': deal.symbol,
-                    'magic': deal.magic
-                }
-            
-            if deal.entry == mt5.DEAL_ENTRY_IN:
-                trades_dict[position_id]['entry'] = deal
-            elif deal.entry == mt5.DEAL_ENTRY_OUT:
-                trades_dict[position_id]['exit'] = deal
-        
-        # Construir TradeRecords
-        result = []
-        
-        for position_id, trade_data in trades_dict.items():
-            entry_deal = trade_data['entry']
-            exit_deal = trade_data['exit']
-            
-            # Solo procesar trades completos (con entrada y salida)
-            if entry_deal is None or exit_deal is None:
-                logger.debug("Trade incompleto para posiciÃ³n %d, omitiendo", position_id)
-                continue
-            
-            # Extraer strategy_name del comentario
-            strategy_name = entry_deal.comment if entry_deal.comment else "Unknown"
-            
-            # Calcular PnL (MT5 ya lo calcula)
-            pnl = exit_deal.profit
-            
-            trade_record = TradeRecord(
-                symbol=trade_data['symbol'],
-                strategy_name=strategy_name,
-                entry_time=datetime.fromtimestamp(entry_deal.time, tz=timezone.utc),
-                exit_time=datetime.fromtimestamp(exit_deal.time, tz=timezone.utc),
-                entry_price=entry_deal.price,
-                exit_price=exit_deal.price,
-                size=entry_deal.volume,
-                pnl=pnl,
-                stop_loss=None,  # No disponible en deals
-                take_profit=None  # No disponible en deals
+            logger.error(
+                "Error al consultar historial. CÃ³digo: %d, Mensaje: %s",
+                error_code,
+                error_msg,
             )
-            
+            return []
+
+        deals_list = list(deals)
+        if not deals_list:
+            logger.info("%s_RESULT deals_found=0 trades_complete=0", log_prefix)
+            return []
+
+        deal_entry_in = getattr(mt5, "DEAL_ENTRY_IN", 0)
+        deal_entry_out = getattr(mt5, "DEAL_ENTRY_OUT", 1)
+
+        trading_deals = []
+        for deal in deals_list:
+            if getattr(deal, "entry", None) not in (deal_entry_in, deal_entry_out):
+                continue
+            deal_time = self._deal_time_utc(deal)
+            deal_ticket = self._deal_ticket(deal)
+
+            if apply_cursor_filter and self._closed_trades_cursor_time_utc is not None:
+                cursor_time = self._closed_trades_cursor_time_utc
+                cursor_ticket = self._closed_trades_cursor_ticket
+                if deal_time < cursor_time:
+                    continue
+                if deal_time == cursor_time and deal_ticket <= cursor_ticket:
+                    continue
+            trading_deals.append(deal)
+
+        if not trading_deals:
+            logger.info(
+                "%s_RESULT deals_found=%d trading_deals=0 trades_complete=0",
+                log_prefix,
+                len(deals_list),
+            )
+            return []
+
+        trading_deals.sort(key=lambda d: (self._deal_time_utc(d), self._deal_ticket(d)))
+
+        entry_by_position: dict[int, list] = {}
+        exit_deals: list = []
+        for deal in trading_deals:
+            position_id = int(getattr(deal, "position_id", 0) or 0)
+            if position_id <= 0:
+                continue
+            if getattr(deal, "entry", None) == deal_entry_in:
+                entry_by_position.setdefault(position_id, []).append(deal)
+            elif getattr(deal, "entry", None) == deal_entry_out:
+                exit_deals.append(deal)
+
+        for deals_in in entry_by_position.values():
+            deals_in.sort(key=lambda d: (self._deal_time_utc(d), self._deal_ticket(d)))
+
+        result = []
+        local_dedupe_keys: set[tuple[int, int]] = set()
+
+        for exit_deal in exit_deals:
+            position_id = int(getattr(exit_deal, "position_id", 0) or 0)
+            exit_ticket = self._deal_ticket(exit_deal)
+            dedupe_key = (position_id, exit_ticket)
+
+            if dedupe_key in local_dedupe_keys:
+                continue
+            if persist_dedupe and dedupe_key in self._closed_trade_dedupe_keys:
+                continue
+
+            entry_deal = self._select_entry_for_exit(entry_by_position.get(position_id, []), exit_deal)
+            if entry_deal is None:
+                exit_time_utc = self._deal_time_utc(exit_deal)
+                fallback_from_utc = exit_time_utc - timedelta(days=self.closed_trades_entry_fallback_days)
+                fallback_deals = self._fetch_deals_by_position(
+                    position_id=position_id,
+                    from_utc=fallback_from_utc,
+                    to_utc=to_utc,
+                    deal_entry_in=deal_entry_in,
+                    deal_entry_out=deal_entry_out,
+                )
+                fallback_entries = [d for d in fallback_deals if getattr(d, "entry", None) == deal_entry_in]
+                if fallback_entries:
+                    entry_by_position.setdefault(position_id, []).extend(fallback_entries)
+                    entry_by_position[position_id].sort(
+                        key=lambda d: (self._deal_time_utc(d), self._deal_ticket(d))
+                    )
+                    entry_deal = self._select_entry_for_exit(entry_by_position[position_id], exit_deal)
+
+            if entry_deal is None:
+                logger.warning(
+                    "CLOSED_TRADES_INCOMPLETE missing_entry position_id=%s exit_ticket=%s exit_time_utc=%s",
+                    position_id,
+                    exit_ticket,
+                    self._deal_time_utc(exit_deal).isoformat(),
+                )
+                continue
+
+            entry_comment = str(getattr(entry_deal, "comment", "") or "").strip()
+            exit_comment = str(getattr(exit_deal, "comment", "") or "").strip()
+            strategy_name = entry_comment or exit_comment or "Unknown"
+            magic_raw = getattr(exit_deal, "magic", None)
+            if magic_raw in (None, 0):
+                magic_raw = getattr(entry_deal, "magic", None)
+            entry_ticket = self._deal_ticket(entry_deal)
+            exit_volume = self._safe_float(getattr(exit_deal, "volume", None), default=0.0)
+            if exit_volume <= 0.0:
+                exit_volume = self._safe_float(getattr(entry_deal, "volume", 0.0), default=0.0)
+
+            trade_record = TradeRecord(
+                symbol=str(getattr(exit_deal, "symbol", None) or getattr(entry_deal, "symbol", "")),
+                strategy_name=strategy_name,
+                entry_time=self._deal_time_utc(entry_deal),
+                exit_time=self._deal_time_utc(exit_deal),
+                entry_price=self._safe_float(getattr(entry_deal, "price", 0.0), default=0.0),
+                exit_price=self._safe_float(getattr(exit_deal, "price", 0.0), default=0.0),
+                size=exit_volume,
+                pnl=self._safe_float(getattr(exit_deal, "profit", 0.0), default=0.0),
+                stop_loss=None,
+                take_profit=None,
+                position_id=position_id,
+                magic_number=int(magic_raw) if magic_raw not in (None, 0) else None,
+                entry_deal_ticket=entry_ticket if entry_ticket > 0 else None,
+                exit_deal_ticket=exit_ticket if exit_ticket > 0 else None,
+            )
+
             result.append(trade_record)
-            
-            logger.debug("Trade: %s, entrada=%s, salida=%s, PnL=%.2f",
-                        trade_data['symbol'],
-                        trade_record.entry_time,
-                        trade_record.exit_time,
-                        pnl)
-        
-        # Ordenar por fecha de cierre (mÃ¡s reciente primero)
+            local_dedupe_keys.add(dedupe_key)
+            if persist_dedupe:
+                self._closed_trade_dedupe_keys.add(dedupe_key)
+
         result.sort(key=lambda x: x.exit_time, reverse=True)
-        
-        logger.info("Procesados %d trades completos", len(result))
-        
+
+        if update_cursor:
+            max_deal = trading_deals[-1]
+            self._closed_trades_cursor_time_utc = self._deal_time_utc(max_deal)
+            self._closed_trades_cursor_ticket = self._deal_ticket(max_deal)
+            self._save_closed_trades_cursor()
+            logger.info(
+                "%s_RESULT deals_found=%d trading_deals=%d trades_complete=%d cursor_updated=%s/%s",
+                log_prefix,
+                len(deals_list),
+                len(trading_deals),
+                len(result),
+                self._closed_trades_cursor_time_utc.isoformat(),
+                self._closed_trades_cursor_ticket,
+            )
+            return result
+
+        logger.info(
+            "%s_RESULT deals_found=%d trading_deals=%d trades_complete=%d",
+            log_prefix,
+            len(deals_list),
+            len(trading_deals),
+            len(result),
+        )
         return result
 
     def get_account_info(self) -> AccountInfo:

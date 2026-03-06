@@ -856,6 +856,8 @@ class PivotZoneTestStrategy:
                 stop_factor = max(f_lo, min(stop_factor, f_hi))
             raw_size = base_size * stop_factor
 
+            # Cap nocional por defecto más holgado para evitar bloqueos por vol_min
+            # en los símbolos actuales (EURUSD/GBPUSD/USDJPY) con size_pct bajo.
             default_cap_pct = min(1.0, max(float(size_pct), float(size_pct) * 2.0))
             try:
                 pct_cap = float(os.getenv("PARITY_PCT_CAP", str(default_cap_pct)))
@@ -905,6 +907,8 @@ class PivotZoneTestStrategy:
 
         raw_lots = raw_lots_by_stop
         capital_cap_lots: Optional[float] = None
+        cap_pct_used: Optional[float] = None
+        cap_formula: str = "n/a"
         if contract_size is not None and contract_size > 0 and entry_price > 0:
             try:
                 stop_ref_pct = float(os.getenv("SIZE_STOP_REFERENCE_PCT", "0.00075"))
@@ -940,17 +944,27 @@ class PivotZoneTestStrategy:
                     cap_pct = float(os.getenv("PARITY_PCT_CAP", str(cap_pct)))
                 except Exception:
                     pass
+            cap_pct_used = float(cap_pct)
             if cap_pct > 0:
                 capital_cap_lots = (float(equity) * float(cap_pct)) / (contract_size * float(entry_price))
+                cap_formula = "price_notional"
                 raw_lots = min(raw_lots, capital_cap_lots)
 
         # Encajar a step y límites
         if capital_cap_lots is not None and capital_cap_lots < vol_min:
-            logger.debug(
-                "[%s] Size descartado: cap nocional < volumen minimo (cap=%.6f vol_min=%.6f)",
+            logger.error(
+                "[%s] Size bloqueado: cap nocional < volumen minimo | symbol=%s cap=%.6f vol_min=%.6f "
+                "equity=%.2f size_pct=%.4f cap_pct=%.4f contract_size=%.6f entry=%.5f formula=%s",
                 self.name,
+                symbol,
                 capital_cap_lots,
                 vol_min,
+                float(equity),
+                float(size_pct),
+                float(cap_pct_used) if cap_pct_used is not None else -1.0,
+                float(contract_size) if contract_size is not None else -1.0,
+                float(entry_price),
+                cap_formula,
             )
             return None
 

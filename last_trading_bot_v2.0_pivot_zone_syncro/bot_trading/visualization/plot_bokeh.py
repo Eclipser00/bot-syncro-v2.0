@@ -185,7 +185,9 @@ def _build_entry_indicators(candles: pd.DataFrame, events: list[dict]) -> list[d
             ts = _to_utc(event.get("ts_m3"))
             if ts is None:
                 continue
-            if ts < idx[0] or ts > idx[-1]:
+            # Permite proyectar eventos historicos previos al inicio de ventana
+            # en la primera vela visible, igual que se hace con las zonas.
+            if ts > idx[-1]:
                 continue
 
             price = float(event.get("price", 0.0))

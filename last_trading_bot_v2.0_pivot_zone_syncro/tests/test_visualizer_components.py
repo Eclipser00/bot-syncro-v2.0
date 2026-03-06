@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import datetime, timezone
 import os
 
 import pandas as pd
 
-from bot_trading.domain.entities import SymbolConfig
+from bot_trading.domain.entities import SymbolConfig, TradeRecord
 from bot_trading.visualization.event_reader import EventReader
 from bot_trading.visualization.live_plot_service import AutoVisualizerService
 from bot_trading.visualization.plot_bokeh import BokehPlotBuilder, _build_entry_indicators, _build_trades_df, safe_write_html
@@ -244,6 +244,134 @@ def test_auto_visualizer_genera_html_por_ticker(tmp_path) -> None:
 
     assert (tmp_path / "visualizerEURUSD.html").exists()
     assert (tmp_path / "visualizerGBPUSD.html").exists()
+
+
+def test_auto_visualizer_bootstrap_historico_separa_fuentes(tmp_path) -> None:
+    symbols = [SymbolConfig(name="EURUSD", min_timeframe="M1")]
+    pivot_log = tmp_path / "pivot_zones.log"
+    events_log = tmp_path / "bot_events.jsonl"
+    pivot_log.write_text(
+        "time=2026-02-11T00:57:00+00:00 symbol=EURUSD tf=M3 top=1.2 bot=1.1 mid=1.15 width=0.05 pivots=5 bar=85 total_saved=1\n",
+        encoding="utf-8",
+    )
+    events_log.write_text(
+        '{"ts_event":"2026-02-11T00:58:00+00:00","symbol":"EURUSD","event_type":"signal","side":"long","price":1.16,"size":0.1,"reason":"legacy_signal"}\n'
+        '{"ts_event":"2026-02-11T00:59:00+00:00","symbol":"EURUSD","event_type":"order_fill","side":"long","price":1.17,"size":0.1,"reason":"legacy_fill"}\n',
+        encoding="utf-8",
+    )
+
+    snapshot_calls: dict[str, datetime] = {}
+
+    def _snapshot_provider(from_utc: datetime, to_utc: datetime) -> list[TradeRecord]:
+        snapshot_calls["from"] = from_utc
+        snapshot_calls["to"] = to_utc
+        return [
+            TradeRecord(
+                symbol="EURUSD",
+                strategy_name="PivotZoneTest",
+                entry_time=datetime(2026, 2, 10, 10, 0, tzinfo=timezone.utc),
+                exit_time=datetime(2026, 2, 10, 13, 0, tzinfo=timezone.utc),
+                entry_price=1.1000,
+                exit_price=1.1050,
+                size=0.20,
+                pnl=100.0,
+                stop_loss=None,
+                take_profit=None,
+                position_id=123,
+                entry_deal_ticket=1001,
+                exit_deal_ticket=1002,
+            )
+        ]
+
+    service = AutoVisualizerService(
+        symbols=symbols,
+        output_dir=tmp_path,
+        pivot_log_path=pivot_log,
+        bot_events_path=events_log,
+        refresh_seconds=1,
+        start_from_end=False,
+        closed_trades_provider=_snapshot_provider,
+        closed_trades_lookback_days=15,
+    )
+
+    idx = pd.date_range("2026-02-11 00:00:00+00:00", periods=3, freq="3min")
+    frame = pd.DataFrame(
+        {
+            "open": [1.0, 1.01, 1.02],
+            "high": [1.02, 1.03, 1.04],
+            "low": [0.99, 1.00, 1.01],
+            "close": [1.01, 1.02, 1.03],
+            "volume": [1.0, 1.0, 1.0],
+        },
+        index=idx,
+    )
+    now = datetime(2026, 2, 11, 0, 6, tzinfo=timezone.utc)
+    service.on_market_data(symbols[0], {"M3": frame}, now)
+
+    state = service.state_store.get_symbol_state("EURUSD")
+    assert state is not None
+    assert len(state.saved_zones) == 1
+    assert "from" in snapshot_calls and "to" in snapshot_calls
+    assert snapshot_calls["from"].tzinfo is not None and snapshot_calls["to"].tzinfo is not None
+
+    reasons = [str(evt.get("reason")) for evt in state.entry_events]
+    event_types = [str(evt.get("event_type")) for evt in state.entry_events]
+    assert "legacy_signal" in reasons
+    assert "legacy_fill" not in reasons
+    assert "bootstrap_mt5_entry" in reasons
+    assert "close_bootstrap_mt5_snapshot" in reasons
+    assert "position" in event_types
+
+
+def test_auto_visualizer_start_from_end_true_no_bootstrap_mt5(tmp_path) -> None:
+    symbols = [SymbolConfig(name="EURUSD", min_timeframe="M1")]
+    pivot_log = tmp_path / "pivot_zones.log"
+    events_log = tmp_path / "bot_events.jsonl"
+    pivot_log.write_text(
+        "time=2026-02-11T00:57:00+00:00 symbol=EURUSD tf=M3 top=1.2 bot=1.1 mid=1.15 width=0.05 pivots=5 bar=85 total_saved=1\n",
+        encoding="utf-8",
+    )
+    events_log.write_text(
+        '{"ts_event":"2026-02-11T00:58:00+00:00","symbol":"EURUSD","event_type":"signal","side":"long","price":1.16,"size":0.1}\n',
+        encoding="utf-8",
+    )
+
+    calls = {"snapshot": 0}
+
+    def _snapshot_provider(from_utc: datetime, to_utc: datetime) -> list[TradeRecord]:
+        calls["snapshot"] += 1
+        return []
+
+    service = AutoVisualizerService(
+        symbols=symbols,
+        output_dir=tmp_path,
+        pivot_log_path=pivot_log,
+        bot_events_path=events_log,
+        refresh_seconds=1,
+        start_from_end=True,
+        closed_trades_provider=_snapshot_provider,
+        closed_trades_lookback_days=15,
+    )
+
+    idx = pd.date_range("2026-02-11 00:00:00+00:00", periods=3, freq="3min")
+    frame = pd.DataFrame(
+        {
+            "open": [1.0, 1.01, 1.02],
+            "high": [1.02, 1.03, 1.04],
+            "low": [0.99, 1.00, 1.01],
+            "close": [1.01, 1.02, 1.03],
+            "volume": [1.0, 1.0, 1.0],
+        },
+        index=idx,
+    )
+    now = datetime(2026, 2, 11, 0, 6, tzinfo=timezone.utc)
+    service.on_market_data(symbols[0], {"M3": frame}, now)
+
+    state = service.state_store.get_symbol_state("EURUSD")
+    assert state is not None
+    assert len(state.saved_zones) == 0
+    assert len(state.entry_events) == 0
+    assert calls["snapshot"] == 0
 
 
 def test_plot_builder_inyecta_autofit_para_pantalla(tmp_path) -> None:

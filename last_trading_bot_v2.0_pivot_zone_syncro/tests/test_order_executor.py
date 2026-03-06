@@ -59,3 +59,37 @@ def test_order_executor_eventos_fill_y_position_usan_fill_price_real() -> None:
     assert position_events
     assert float(fill_events[-1]["price"]) == 1.23456
     assert float(position_events[-1]["price"]) == 1.23456
+
+
+def test_order_executor_normaliza_ts_event_naive_a_utc() -> None:
+    class BrokerConFill:
+        def send_market_order(self, order_request: OrderRequest) -> OrderResult:
+            return OrderResult(success=True, order_id=11, fill_price=1.2000)
+
+        def get_open_positions(self):
+            return []
+
+    class ExecutorSpy(OrderExecutor):
+        def __init__(self, broker_client) -> None:
+            super().__init__(broker_client)
+            self.events: list[dict] = []
+
+        def _emit_event(self, payload: dict) -> None:  # type: ignore[override]
+            self.events.append(payload)
+
+    broker = BrokerConFill()
+    executor = ExecutorSpy(broker)
+    request = OrderRequest(
+        symbol="EURUSD",
+        volume=0.01,
+        order_type="BUY",
+        timeframe="M1",
+        ts_event="2026-03-05T06:29:37",
+    )
+
+    result = executor.execute_order(request)
+
+    assert result.success is True
+    assert executor.events
+    for event in executor.events:
+        assert event["ts_event"].endswith("+00:00")

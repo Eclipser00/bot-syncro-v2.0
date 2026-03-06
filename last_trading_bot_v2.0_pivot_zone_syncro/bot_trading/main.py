@@ -625,7 +625,16 @@ def _build_broker():
     broker_cfg = settings.broker
     if broker_cfg.use_real_broker:
         logger.info("Modo PRODUCCION: MetaTrader5 (retries=%d, delay=%.2fs)", broker_cfg.max_retries, broker_cfg.retry_delay)
-        broker = MetaTrader5Client(max_retries=broker_cfg.max_retries, retry_delay=broker_cfg.retry_delay)
+        temporal_cfg = settings.temporal
+        broker = MetaTrader5Client(
+            max_retries=broker_cfg.max_retries,
+            retry_delay=broker_cfg.retry_delay,
+            strict_utc_mode=temporal_cfg.strict_utc_mode,
+            closed_trades_cursor_path=temporal_cfg.closed_trades_cursor_path,
+            closed_trades_overlap_minutes=temporal_cfg.closed_trades_overlap_minutes,
+            closed_trades_initial_lookback_hours=temporal_cfg.closed_trades_initial_lookback_hours,
+            closed_trades_entry_fallback_days=temporal_cfg.closed_trades_entry_fallback_days,
+        )
         try:
             broker.connect()
             logger.info("Conexion exitosa con MetaTrader5")
@@ -746,7 +755,7 @@ def _build_strategies(broker) -> List[PivotZoneTestStrategy]:
     return strategies
 
 
-def _build_auto_visualizer(symbols: List[SymbolConfig]) -> AutoVisualizerService | None:
+def _build_auto_visualizer(symbols: List[SymbolConfig], broker=None) -> AutoVisualizerService | None:
     """Inicializa el visualizador automatico integrado al loop principal.
 
     Se habilita por defecto en todos los modos cuando se arranca el bot normal
@@ -775,6 +784,11 @@ def _build_auto_visualizer(symbols: List[SymbolConfig]) -> AutoVisualizerService
     output_dir = (ROOT / "outputs").resolve()
     pivot_log_path = (ROOT / (settings.logging.pivot_log_file_path or "logs/pivot_zones.log")).resolve()
     bot_events_path = resolve_bot_events_path(ROOT, "outputs/bot_events.jsonl")
+    closed_trades_provider = None
+    if broker is not None:
+        candidate = getattr(broker, "get_closed_trades_snapshot", None)
+        if callable(candidate):
+            closed_trades_provider = candidate
 
     try:
         return AutoVisualizerService(
@@ -783,7 +797,9 @@ def _build_auto_visualizer(symbols: List[SymbolConfig]) -> AutoVisualizerService
             pivot_log_path=pivot_log_path,
             bot_events_path=bot_events_path,
             refresh_seconds=refresh_seconds,
-            start_from_end=True,
+            start_from_end=settings.logging.visualizer_start_from_end,
+            closed_trades_provider=closed_trades_provider,
+            closed_trades_lookback_days=settings.data.bootstrap_lookback_days_zone,
         )
     except Exception as exc:
         logger.error("No se pudo inicializar AutoVisualizer: %s", exc, exc_info=True)
@@ -887,7 +903,7 @@ def main() -> None:
     order_executor = OrderExecutor(broker)
     strategies = _build_strategies(broker)
     symbols = _build_symbols()
-    auto_visualizer = _build_auto_visualizer(symbols)
+    auto_visualizer = _build_auto_visualizer(symbols, broker=broker)
 
     bot = TradingBot(
         broker_client=broker,

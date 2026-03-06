@@ -88,6 +88,7 @@ class LoggingConfig:
     log_to_file: True escribe a disco; False solo consola.
     log_file_path: ruta del archivo de log (relativa a la raiz del repo).
     pivot_log_file_path: ruta del log dedicado de zonas pivote (relativa a la raiz).
+    visualizer_start_from_end: si True, el visualizador ignora historial previo y solo lee eventos nuevos tras arrancar.
     format: formato de linea de log.
     """
 
@@ -95,6 +96,7 @@ class LoggingConfig:
     log_to_file: bool  # True escribe en archivo ademas de consola
     log_file_path: Optional[str] = None  # ruta del archivo de log si se usa
     pivot_log_file_path: Optional[str] = "logs/pivot_zones.log"  # ruta del log dedicado de zonas pivote
+    visualizer_start_from_end: bool = False  # True=solo eventos nuevos; False=carga historial existente al iniciar
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"  # formato de linea de log
 
 
@@ -127,11 +129,11 @@ class SymbolConfigEntry:
 
     name: str  # simbolo tal como lo expone el broker (p.ej. EURUSD)
     min_timeframe: str  # timeframe minimo disponible en broker
-    n1: Optional[int] = None  # override de lookback ATR (velas) por simbolo
-    n2: Optional[int] = None  # override de multiplicador % ATR por simbolo
-    n3: Optional[int] = None  # override de pivotes requeridos por simbolo
+    n1: Optional[int] = None  # override de separacion minima entre zonas (en anchos de zona)
+    n2: Optional[int] = None  # override de multiplicador (%) sobre ATR(14) para ancho de zona
+    n3: Optional[int] = None  # override de pivotes minimos para bloquear/validar una zona
     size_pct: Optional[float] = None  # override de size_pct por simbolo
-    p: Optional[float] = None  # override de multiplicador de pivote por simbolo
+    p: Optional[float] = None  # override de parametro reservado (compatibilidad; sin efecto operativo hoy)
 
 
 @dataclass
@@ -142,11 +144,11 @@ class StrategyConfig:
     allowed_symbols: lista blanca de simbolos. Si se deja vacia/None, se usan
         todos los simbolos definidos en `symbols`.
     tf_entry/tf_zone/tf_stop: timeframes usados por la logica.
-    n1: periodos ATR para ancho de zona (velas TF_zone).
-    n2: multiplicador (%) aplicado al ATR para definir ancho de zona.
-    n3: cantidad de pivotes necesarios para bloquear una zona.
+    n1: multiplicador de separacion minima entre zonas guardadas.
+    n2: multiplicador (%) aplicado al ATR(14) para definir ancho de zona.
+    n3: cantidad de pivotes necesarios para bloquear/validar una zona.
     size_pct: porcentaje del balance para calcular el lote (0.05 = 5%).
-    p: multiplicador de pivote, impacto directo en niveles de zona.
+    p: parametro legado/reservado (se mantiene por compatibilidad de config).
     timeframes: lista de timeframes que el motor debe descargar.
     """
 
@@ -155,11 +157,11 @@ class StrategyConfig:
     tf_entry: str  # timeframe que usa la logica de entrada
     tf_zone: str  # timeframe para calcular zonas pivote
     tf_stop: str  # timeframe que define stops
-    n1: int  # lookback ATR (velas) para calcular ancho de zona
-    n2: int  # multiplicador (%) aplicado al ATR para ancho de zona
-    n3: int  # pivotes requeridos para bloquear una zona
+    n1: int  # separacion minima entre zonas (min_distance = zone_width * n1)
+    n2: int  # multiplicador (%) sobre ATR(14) para ancho de zona (100 = 1x ATR)
+    n3: int  # pivotes minimos para bloquear/validar una zona
     size_pct: float  # porcentaje del balance para dimensionar la posicion
-    p: float  # multiplicador de pivote/zona
+    p: float  # parametro reservado para compatibilidad (sin uso operativo actual)
     timeframes: List[str] = field(default_factory=list)  # timeframes que debe descargar el motor
 
 
@@ -193,6 +195,24 @@ class DataConfig:
 
 
 @dataclass
+class TemporalConfig:
+    """Config de hardening temporal UTC↔broker.
+
+    strict_utc_mode: normaliza datetimes naive a UTC y emite warning con contexto.
+    closed_trades_cursor_path: ruta del cursor persistente de historial de deals.
+    closed_trades_overlap_minutes: solape para releer deals sin perder cierres.
+    closed_trades_initial_lookback_hours: ventana inicial si no hay cursor.
+    closed_trades_entry_fallback_days: búsqueda histórica de entry cuando llega un OUT sin IN.
+    """
+
+    strict_utc_mode: bool = True
+    closed_trades_cursor_path: str = "outputs/closed_trades_cursor.json"
+    closed_trades_overlap_minutes: int = 10
+    closed_trades_initial_lookback_hours: int = 72
+    closed_trades_entry_fallback_days: int = 7
+
+
+@dataclass
 class BotConfig:
     """Config global unificada del bot."""
 
@@ -205,6 +225,7 @@ class BotConfig:
     strategies: List[StrategyConfig]  # estrategias activas
     loop: LoopConfig  # parametros del bucle de ejecucion
     data: DataConfig  # configuracion de feeds/datos
+    temporal: TemporalConfig  # hardening temporal UTC/broker
 
 
 # =============================================================================
@@ -216,31 +237,31 @@ class BotConfig:
 # logging/riesgo; las estrategias y simbolos comparten la misma declaracion.
 DEFAULT_SYMBOLS: List[SymbolConfigEntry] = [
     SymbolConfigEntry(
-        name="EURUSD",
-        min_timeframe="M3",
-        n1=3,
-        n2=100,
-        n3=5,
-        size_pct=0.05,
-        p=0.50,
+        name="EURUSD",  # simbolo/instrumento a operar
+        min_timeframe="M3",  # timeframe minimo habilitado para este simbolo
+        n1=2,  # separacion minima entre zonas = 3 anchos de zona
+        n2=100,  # ancho de zona = ATR(14) * (100/100) = 1.0x ATR
+        n3=5,  # pivotes minimos para bloquear/validar una zona pivote
+        size_pct=0.1,  # tamano por operacion (fraccion del capital)
+        p=0.50,  # reservado por compatibilidad (actualmente no altera la logica)
     ),
     SymbolConfigEntry(
-        name="GBPUSD",
-        min_timeframe="M3",
-        n1=3,
-        n2=100,
-        n3=5,
-        size_pct=0.05,
-        p=0.50,
+        name="GBPUSD",  # simbolo/instrumento a operar
+        min_timeframe="M3",  # timeframe minimo habilitado para este simbolo
+        n1=2,  # separacion minima entre zonas = 3 anchos de zona
+        n2=100,  # ancho de zona = ATR(14) * (100/100) = 1.0x ATR
+        n3=5,  # pivotes minimos para bloquear/validar una zona pivote
+        size_pct=0.1,  # tamano por operacion (fraccion del capital)
+        p=0.50,  # reservado por compatibilidad (actualmente no altera la logica)
     ),
     SymbolConfigEntry(
-        name="USDJPY",
-        min_timeframe="M3",
-        n1=3,
-        n2=100,
-        n3=5,
-        size_pct=0.05,
-        p=0.50,
+        name="USDJPY",  # simbolo/instrumento a operar
+        min_timeframe="M3",  # timeframe minimo habilitado para este simbolo
+        n1=2,  # separacion minima entre zonas = 3 anchos de zona
+        n2=100,  # ancho de zona = ATR(14) * (100/100) = 1.0x ATR
+        n3=5,  # pivotes minimos para bloquear/validar una zona pivote
+        size_pct=0.1,  # tamano por operacion (fraccion del capital)
+        p=0.50,  # reservado por compatibilidad (actualmente no altera la logica)
     ),
 ]
 
@@ -278,6 +299,7 @@ ENVIRONMENTS: Dict[str, BotConfig] = {
             log_to_file=True,  # escribe logs a disco
             log_file_path="logs/production.log",  # archivo de log en produccion
             pivot_log_file_path="logs/pivot_zones.log",  # log dedicado de zonas pivote
+            visualizer_start_from_end=False,  # False para que el visualizador incluya historial al reiniciar
         ),
         risk=RiskConfig(
             dd_global=30.0,  # drawdown maximo global permitido
@@ -301,6 +323,13 @@ ENVIRONMENTS: Dict[str, BotConfig] = {
             bootstrap_lookback_days_stop=None,  # hereda zona si None
             csv_base_timeframe="M3",  # timeframe base de CSV
         ),
+        temporal=TemporalConfig(
+            strict_utc_mode=True,
+            closed_trades_cursor_path="outputs/closed_trades_cursor.json",
+            closed_trades_overlap_minutes=10,
+            closed_trades_initial_lookback_hours=72,
+            closed_trades_entry_fallback_days=7,
+        ),
     ),
     ################################################
     #            DEVELOPMENT CONFIG                #
@@ -319,6 +348,7 @@ ENVIRONMENTS: Dict[str, BotConfig] = {
             log_to_file=True,  # escribe a disco
             log_file_path="logs/development.log",  # archivo de log de desarrollo
             pivot_log_file_path="logs/pivot_zones.log",  # log dedicado de zonas pivote
+            visualizer_start_from_end=True,  # False para depurar con historial completo en cada arranque
         ),
         risk=RiskConfig(
             dd_global=30.0,  # drawdown maximo global
@@ -341,6 +371,13 @@ ENVIRONMENTS: Dict[str, BotConfig] = {
             bootstrap_lookback_days_entry=None,  # hereda zona si None
             bootstrap_lookback_days_stop=None,  # hereda zona si None
             csv_base_timeframe="M3",  # timeframe base de CSV
+        ),
+        temporal=TemporalConfig(
+            strict_utc_mode=True,
+            closed_trades_cursor_path="outputs/closed_trades_cursor.json",
+            closed_trades_overlap_minutes=10,
+            closed_trades_initial_lookback_hours=72,
+            closed_trades_entry_fallback_days=7,
         ),
     ),
     ################################################
@@ -380,6 +417,13 @@ ENVIRONMENTS: Dict[str, BotConfig] = {
             bootstrap_lookback_days_entry=None,  # hereda zona si None
             bootstrap_lookback_days_stop=None,  # hereda zona si None
             csv_base_timeframe="M3",  # timeframe base de CSV
+        ),
+        temporal=TemporalConfig(
+            strict_utc_mode=True,
+            closed_trades_cursor_path="outputs/closed_trades_cursor.json",
+            closed_trades_overlap_minutes=10,
+            closed_trades_initial_lookback_hours=72,
+            closed_trades_entry_fallback_days=7,
         ),
     ),
 }
@@ -488,6 +532,8 @@ def validate_config(cfg: BotConfig) -> None:
         errors.append("wait_after_close no puede ser negativo.")
     if not isinstance(cfg.loop.skip_sleep_when_simulated, bool):
         errors.append("skip_sleep_when_simulated debe ser booleano.")
+    if not isinstance(cfg.logging.visualizer_start_from_end, bool):
+        errors.append("visualizer_start_from_end debe ser booleano.")
 
     # Normalizar lookbacks de data (entry/stop usan zone si no se definen)
     if cfg.data.data_mode not in {"production", "development"}:
@@ -501,6 +547,17 @@ def validate_config(cfg: BotConfig) -> None:
         errors.append("Para broker real, data_mode debe ser 'production'.")
     if not cfg.broker.use_real_broker and cfg.data.data_mode != "development":
         errors.append("Para broker simulado, data_mode debe ser 'development'.")
+
+    if not isinstance(cfg.temporal.strict_utc_mode, bool):
+        errors.append("strict_utc_mode debe ser booleano.")
+    if not cfg.temporal.closed_trades_cursor_path:
+        errors.append("closed_trades_cursor_path no puede estar vacio.")
+    if cfg.temporal.closed_trades_overlap_minutes < 0:
+        errors.append("closed_trades_overlap_minutes no puede ser negativo.")
+    if cfg.temporal.closed_trades_initial_lookback_hours <= 0:
+        errors.append("closed_trades_initial_lookback_hours debe ser > 0.")
+    if cfg.temporal.closed_trades_entry_fallback_days <= 0:
+        errors.append("closed_trades_entry_fallback_days debe ser > 0.")
 
     if errors:
         joined = "; ".join(errors)

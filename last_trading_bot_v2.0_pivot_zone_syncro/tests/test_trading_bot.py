@@ -177,6 +177,78 @@ def test_update_trade_history_emite_cierre_desde_trade_history_con_precio_real()
     assert float(position_event["price"]) == 1.1055
 
 
+def test_update_trade_history_deduplica_por_position_y_exit_deal_ticket() -> None:
+    class BrokerWithDuplicateTrades(FakeBroker):
+        def __init__(self, trades: list[TradeRecord]) -> None:
+            super().__init__()
+            self._closed_trades = trades
+
+        def get_closed_trades(self):
+            return list(self._closed_trades)
+
+    class ExecutorSpy(OrderExecutor):
+        def __init__(self, broker_client) -> None:
+            super().__init__(broker_client)
+            self.events: list[dict] = []
+
+        def _emit_event(self, payload: dict) -> None:  # type: ignore[override]
+            self.events.append(payload)
+
+    trade_a = TradeRecord(
+        symbol="EURUSD",
+        strategy_name="dummy-A",
+        entry_time=datetime(2026, 3, 4, 12, 9, 1, tzinfo=timezone.utc),
+        exit_time=datetime(2026, 3, 5, 6, 29, 37, tzinfo=timezone.utc),
+        entry_price=1.0845,
+        exit_price=1.0820,
+        size=0.20,
+        pnl=-50.0,
+        stop_loss=None,
+        take_profit=None,
+        position_id=55560004296,
+        magic_number=99001,
+        entry_deal_ticket=1234567001,
+        exit_deal_ticket=1234567002,
+    )
+    trade_b = TradeRecord(
+        symbol="EURUSD",
+        strategy_name="dummy-B",
+        entry_time=datetime(2026, 3, 4, 12, 9, 1, tzinfo=timezone.utc),
+        exit_time=datetime(2026, 3, 5, 6, 29, 37, tzinfo=timezone.utc),
+        entry_price=1.0845,
+        exit_price=1.0820,
+        size=0.20,
+        pnl=-50.0,
+        stop_loss=None,
+        take_profit=None,
+        position_id=55560004296,
+        magic_number=99001,
+        entry_deal_ticket=1234567001,
+        exit_deal_ticket=1234567002,
+    )
+
+    broker = BrokerWithDuplicateTrades([trade_a, trade_b])
+    market_data = MarketDataService(broker)
+    risk_manager = RiskManager(RiskLimits())
+    executor = ExecutorSpy(broker)
+    bot = TradingBot(
+        broker_client=broker,
+        market_data_service=market_data,
+        risk_manager=risk_manager,
+        order_executor=executor,
+        strategies=[],
+        symbols=[SymbolConfig(name="EURUSD", min_timeframe="M1")],
+    )
+
+    bot._update_trade_history()
+    bot._update_trade_history()
+
+    assert len(bot.trade_history) == 1
+    assert len(executor.events) == 2
+    assert executor.events[0]["order_id"] == "1234567002"
+    assert executor.events[1]["order_id"] == "1234567002"
+
+
 def test_sync_clock_with_broker_aplica_offset() -> None:
     class BrokerWithServerClock(FakeBroker):
         def __init__(self, offset_seconds: float) -> None:
@@ -239,4 +311,90 @@ def test_sync_clock_with_broker_falla_si_residual_supera_umbral() -> None:
         )
 
     assert bot.clock_offset == timedelta(0)
+
+
+def test_run_synchronized_no_duplica_misma_vela_en_cierre_exacto(monkeypatch) -> None:
+    class _BoundaryBot(TradingBot):
+        def __init__(self) -> None:
+            super().__init__(
+                broker_client=object(),
+                market_data_service=object(),
+                risk_manager=object(),
+                order_executor=object(),
+                strategies=[],
+                symbols=[],
+            )
+            self._now_values = [
+                datetime(2024, 1, 1, 0, 23, 59, 900000, tzinfo=timezone.utc),
+                datetime(2024, 1, 1, 0, 24, 0, 100000, tzinfo=timezone.utc),
+                datetime(2024, 1, 1, 0, 24, 0, 200000, tzinfo=timezone.utc),
+            ]
+            self.executed: list[datetime] = []
+
+        def _now(self) -> datetime:
+            if self._now_values:
+                self._last_now = self._now_values.pop(0)
+            return self._last_now
+
+        def run_once(self, now: datetime | None = None) -> None:
+            assert now is not None
+            self.executed.append(now)
+
+    bot = _BoundaryBot()
+
+    def _fake_sleep(_seconds: float) -> None:
+        raise SystemExit
+
+    monkeypatch.setattr("bot_trading.application.engine.bot_engine.time.sleep", _fake_sleep)
+
+    with pytest.raises(SystemExit):
+        bot.run_synchronized(timeframe_minutes=3, wait_after_close=0, skip_sleep_when_simulated=False)
+
+    assert bot.executed == [datetime(2024, 1, 1, 0, 24, 0, tzinfo=timezone.utc)]
+
+
+def test_run_synchronized_catchup_ejecuta_todas_las_velas_pendientes(monkeypatch) -> None:
+    class _CatchupBot(TradingBot):
+        def __init__(self) -> None:
+            super().__init__(
+                broker_client=object(),
+                market_data_service=object(),
+                risk_manager=object(),
+                order_executor=object(),
+                strategies=[],
+                symbols=[],
+            )
+            self._now_values = [
+                datetime(2024, 1, 1, 0, 23, 50, tzinfo=timezone.utc),
+                datetime(2024, 1, 1, 0, 33, 10, tzinfo=timezone.utc),
+                datetime(2024, 1, 1, 0, 33, 10, tzinfo=timezone.utc),
+            ]
+            self.executed: list[datetime] = []
+
+        def _now(self) -> datetime:
+            if self._now_values:
+                self._last_now = self._now_values.pop(0)
+            return self._last_now
+
+        def run_once(self, now: datetime | None = None) -> None:
+            assert now is not None
+            self.executed.append(now)
+
+    bot = _CatchupBot()
+
+    def _fake_sleep(_seconds: float) -> None:
+        raise SystemExit
+
+    monkeypatch.setattr("bot_trading.application.engine.bot_engine.time.sleep", _fake_sleep)
+
+    with pytest.raises(SystemExit):
+        bot.run_synchronized(timeframe_minutes=3, wait_after_close=0, skip_sleep_when_simulated=False)
+
+    expected = [
+        datetime(2024, 1, 1, 0, 24, 0, tzinfo=timezone.utc),
+        datetime(2024, 1, 1, 0, 27, 0, tzinfo=timezone.utc),
+        datetime(2024, 1, 1, 0, 30, 0, tzinfo=timezone.utc),
+        datetime(2024, 1, 1, 0, 33, 0, tzinfo=timezone.utc),
+    ]
+    assert bot.executed == expected
 

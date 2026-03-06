@@ -19,12 +19,19 @@ def test_build_auto_visualizer_habilitado_por_defecto(monkeypatch, tmp_path: Pat
             captured.update(kwargs)
 
     monkeypatch.setattr(main_mod, "AutoVisualizerService", DummyAutoVisualizerService)
+    broker = type(
+        "BrokerWithSnapshot",
+        (),
+        {"get_closed_trades_snapshot": lambda self, from_utc, to_utc: []},
+    )()
 
-    result = main_mod._build_auto_visualizer([SymbolConfig(name="EURUSD", min_timeframe="M1")])
+    result = main_mod._build_auto_visualizer([SymbolConfig(name="EURUSD", min_timeframe="M1")], broker=broker)
 
     assert isinstance(result, DummyAutoVisualizerService)
     assert captured["refresh_seconds"] == 17
-    assert captured["start_from_end"] is True
+    assert captured["start_from_end"] is main_mod.settings.logging.visualizer_start_from_end
+    assert callable(captured["closed_trades_provider"])
+    assert captured["closed_trades_lookback_days"] == main_mod.settings.data.bootstrap_lookback_days_zone
     assert captured["symbols"][0].name == "EURUSD"
 
 

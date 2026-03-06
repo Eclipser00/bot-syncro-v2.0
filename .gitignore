@@ -17,12 +17,15 @@ backtest bot v7.0 syncro/stats/
 backtest bot v7.0 syncro/stress/
 backtest bot v7.0 syncro/trades/
 backtest bot v7.0 syncro/wf/
-last_tradnig_bot_v2.0_pivot_zone_syncro/datadevelopment/
-last_tradnig_bot_v2.0_pivot_zone_syncro/outputs/
-last_tradnig_bot_v2.0_pivot_zone_syncro/logs/
+last_trading_bot_v2.0_pivot_zone_syncro/datadevelopment/
+last_trading_bot_v2.0_pivot_zone_syncro/outputs/
+last_trading_bot_v2.0_pivot_zone_syncro/logs/
 
-Add-Content .gitignore "`n**/logs/"
-Add-Content .gitignore "`n**/outputs/"
+# Global generated artifacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+*.code-workspace
 
 **/logs/
 **/outputs/

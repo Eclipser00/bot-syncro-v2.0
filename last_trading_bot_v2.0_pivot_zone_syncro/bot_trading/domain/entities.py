@@ -122,6 +122,10 @@ class TradeRecord:
         pnl: Ganancia o pérdida resultante.
         stop_loss: Stop loss usado.
         take_profit: Take profit usado.
+        position_id: Identificador de posición en broker (si aplica).
+        magic_number: Magic number asociado al trade (si aplica).
+        entry_deal_ticket: Ticket del deal de entrada (si aplica).
+        exit_deal_ticket: Ticket del deal de salida (si aplica).
     """
 
     symbol: str
@@ -134,6 +138,10 @@ class TradeRecord:
     pnl: float
     stop_loss: Optional[float]
     take_profit: Optional[float]
+    position_id: Optional[int] = None
+    magic_number: Optional[int] = None
+    entry_deal_ticket: Optional[int] = None
+    exit_deal_ticket: Optional[int] = None
 
 
 @dataclass
