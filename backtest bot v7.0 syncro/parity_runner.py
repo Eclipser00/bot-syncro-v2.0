@@ -79,14 +79,13 @@ def _load_bot_params(bot_config_path: Path) -> tuple[dict[str, dict[str, float]]
                 "n2": int(getattr(strat_params, "n2", 60)),
                 "n3": int(getattr(strat_params, "n3", 3)),
                 "size_pct": float(getattr(strat_params, "size_pct", 0.05)),
-                "p": float(getattr(strat_params, "p", 0.50)),
             }
 
         params_by_symbol: dict[str, dict[str, float]] = {}
         for sym in getattr(settings, "symbols", []):
             key = _symbol_key(getattr(sym, "name", ""))
             overrides: dict[str, float] = {}
-            for field in ("n1", "n2", "n3", "size_pct", "p"):
+            for field in ("n1", "n2", "n3", "size_pct"):
                 value = getattr(sym, field, None)
                 if value is None:
                     continue
@@ -159,13 +158,14 @@ def _strategy_params(
     n1 = int(getattr(bt_config, "N1_RANGE", [14])[0])
     n2 = int(getattr(bt_config, "N2_RANGE", [60])[0])
     n3 = int(getattr(bt_config, "N3_RANGE", [3])[0])
-    # size_pct y p: no estÃ¡n en config.py del backtest; usamos defaults de la estrategia
+    # Nota: este refactor solo elimina el parámetro de estrategia/config `p`.
+    # No tocar `comm_info.p`/`ci.p` de Backtrader (API de comisiones), usado en `strategies.py`.
+    # size_pct no está en config.py del backtest; usamos default de estrategia.
     params: dict[str, float] = {
         "n1": float(n1),
         "n2": float(n2),
         "n3": float(n3),
         "size_pct": 0.05,
-        "p": 0.50,
     }
     if base_params:
         params.update(base_params)
@@ -275,8 +275,7 @@ def run_symbol(
         f"n1={strategy_params.get('n1')} "
         f"n2={strategy_params.get('n2')} "
         f"n3={strategy_params.get('n3')} "
-        f"size_pct={strategy_params.get('size_pct')} "
-        f"p={strategy_params.get('p')}"
+        f"size_pct={strategy_params.get('size_pct')}"
     )
     cerebro.addstrategy(PivotZoneTest, **strategy_params)
     results = cerebro.run(runonce=False, preload=True)

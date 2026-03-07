@@ -17,7 +17,7 @@ class SymbolConfig:
     Attributes:
         name: Nombre del símbolo/ticker en el broker.
         min_timeframe: Timeframe mínimo disponible en el broker.
-        n1/n2/n3/size_pct/p: Overrides opcionales por símbolo para estrategias
+        n1/n2/n3/size_pct: Overrides opcionales por símbolo para estrategias
             basadas en PivotZone. Si no se definen, se usan los valores por
             defecto de la estrategia.
     """
@@ -28,7 +28,6 @@ class SymbolConfig:
     n2: Optional[int] = None
     n3: Optional[int] = None
     size_pct: Optional[float] = None
-    p: Optional[float] = None
 
 
 @dataclass

@@ -52,7 +52,7 @@ def _reexec_with_project_venv_if_needed() -> None:
 # =============================================================================
 
 # Selecciona el entorno activo: "development" (paper/FakeBroker), "production" (MT5 real) o "testing".
-ACTIVE_ENV = "production"  # entorno que usara el bot al arrancar
+ACTIVE_ENV = "development"  # entorno que usara el bot al arrancar
 
 
 # =============================================================================
@@ -124,7 +124,7 @@ class SymbolConfigEntry:
 
     name: simbolo en el broker (ej: EURUSD).
     min_timeframe: timeframe minimo disponible en el broker (ej: M1).
-    n1/n2/n3/size_pct/p: overrides opcionales por simbolo para estrategias.
+    n1/n2/n3/size_pct: overrides opcionales por simbolo para estrategias.
     """
 
     name: str  # simbolo tal como lo expone el broker (p.ej. EURUSD)
@@ -133,7 +133,6 @@ class SymbolConfigEntry:
     n2: Optional[int] = None  # override de multiplicador (%) sobre ATR(14) para ancho de zona
     n3: Optional[int] = None  # override de pivotes minimos para bloquear/validar una zona
     size_pct: Optional[float] = None  # override de size_pct por simbolo
-    p: Optional[float] = None  # override de parametro reservado (compatibilidad; sin efecto operativo hoy)
 
 
 @dataclass
@@ -148,7 +147,6 @@ class StrategyConfig:
     n2: multiplicador (%) aplicado al ATR(14) para definir ancho de zona.
     n3: cantidad de pivotes necesarios para bloquear/validar una zona.
     size_pct: porcentaje del balance para calcular el lote (0.05 = 5%).
-    p: parametro legado/reservado (se mantiene por compatibilidad de config).
     timeframes: lista de timeframes que el motor debe descargar.
     """
 
@@ -161,7 +159,6 @@ class StrategyConfig:
     n2: int  # multiplicador (%) sobre ATR(14) para ancho de zona (100 = 1x ATR)
     n3: int  # pivotes minimos para bloquear/validar una zona
     size_pct: float  # porcentaje del balance para dimensionar la posicion
-    p: float  # parametro reservado para compatibilidad (sin uso operativo actual)
     timeframes: List[str] = field(default_factory=list)  # timeframes que debe descargar el motor
 
 
@@ -239,29 +236,26 @@ DEFAULT_SYMBOLS: List[SymbolConfigEntry] = [
     SymbolConfigEntry(
         name="EURUSD",  # simbolo/instrumento a operar
         min_timeframe="M3",  # timeframe minimo habilitado para este simbolo
-        n1=2,  # separacion minima entre zonas = 3 anchos de zona
+        n1=3,  # separacion minima entre zonas = 3 anchos de zona
         n2=100,  # ancho de zona = ATR(14) * (100/100) = 1.0x ATR
         n3=5,  # pivotes minimos para bloquear/validar una zona pivote
         size_pct=0.1,  # tamano por operacion (fraccion del capital)
-        p=0.50,  # reservado por compatibilidad (actualmente no altera la logica)
     ),
     SymbolConfigEntry(
         name="GBPUSD",  # simbolo/instrumento a operar
         min_timeframe="M3",  # timeframe minimo habilitado para este simbolo
-        n1=2,  # separacion minima entre zonas = 3 anchos de zona
+        n1=3,  # separacion minima entre zonas = 3 anchos de zona
         n2=100,  # ancho de zona = ATR(14) * (100/100) = 1.0x ATR
         n3=5,  # pivotes minimos para bloquear/validar una zona pivote
         size_pct=0.1,  # tamano por operacion (fraccion del capital)
-        p=0.50,  # reservado por compatibilidad (actualmente no altera la logica)
     ),
     SymbolConfigEntry(
         name="USDJPY",  # simbolo/instrumento a operar
         min_timeframe="M3",  # timeframe minimo habilitado para este simbolo
-        n1=2,  # separacion minima entre zonas = 3 anchos de zona
+        n1=3,  # separacion minima entre zonas = 3 anchos de zona
         n2=100,  # ancho de zona = ATR(14) * (100/100) = 1.0x ATR
         n3=5,  # pivotes minimos para bloquear/validar una zona pivote
         size_pct=0.1,  # tamano por operacion (fraccion del capital)
-        p=0.50,  # reservado por compatibilidad (actualmente no altera la logica)
     ),
 ]
 
@@ -276,7 +270,6 @@ DEFAULT_STRATEGIES: List[StrategyConfig] = [
         n2=100,
         n3=5,
         size_pct=0.05,
-        p=0.50,
         timeframes=["M3", "M9"],
     )
 ]
@@ -444,11 +437,6 @@ def load_settings(env: Optional[str] = None) -> BotConfig:
 settings: BotConfig = load_settings()
 
 
-def get_config() -> BotConfig:
-    """Mantiene compatibilidad: retorna la configuracion activa."""
-    return settings
-
-
 # =============================================================================
 # 5) Validacion
 # =============================================================================
@@ -490,8 +478,6 @@ def validate_config(cfg: BotConfig) -> None:
             errors.append(f"Simbolo {sym.name} con n3 <= 0.")
         if sym.size_pct is not None and (sym.size_pct <= 0 or sym.size_pct > 1):
             errors.append(f"Simbolo {sym.name} size_pct debe estar en (0,1].")
-        if sym.p is not None and sym.p <= 0:
-            errors.append(f"Simbolo {sym.name} p debe ser > 0.")
 
     if cfg.risk.dd_global is not None and cfg.risk.dd_global <= 0:
         errors.append("dd_global debe ser > 0.")
@@ -523,8 +509,6 @@ def validate_config(cfg: BotConfig) -> None:
             errors.append(f"Estrategia {strat.name} requiere n1/n2/n3 > 0.")
         if strat.size_pct <= 0 or strat.size_pct > 1:
             errors.append(f"Estrategia {strat.name} size_pct debe estar en (0,1].")
-        if strat.p <= 0:
-            errors.append(f"Estrategia {strat.name} p debe ser > 0.")
 
     if cfg.loop.timeframe_minutes <= 0:
         errors.append("timeframe_minutes debe ser > 0.")

@@ -14,7 +14,7 @@
 - El broker real soportado es MetaTrader5 via `MetaTrader5Client`, y hay un `FakeBroker` de ejemplo para ejecucion local. (ref: bot_trading/infrastructure/mt5_client.py:MetaTrader5Client, bot_trading/main.py:FakeBroker)
 - En modo development, `FakeBroker` simula fills de SL/TP usando el OHLC mas reciente (via `process_price_tick`); para paridad se puede forzar cierre "solo en close" con `PARITY_CLOSE_ON_CLOSE=1`, diferir el cierre 1 vela con `PARITY_CLOSE_DELAY=1`, registrar el fill al precio de cierre con `PARITY_CLOSE_PRICE_ON_CLOSE=1`, y omitir la validacion de SL/TP con `PARITY_SKIP_SLTP_VALIDATION=1`. (ref: bot_trading/main.py:FakeBroker.process_price_tick, bot_trading/application/engine/bot_engine.py:TradingBot.run_once, bot_trading/application/strategies/pivot_zone_test_strategy.py:PivotZoneTestStrategy)
 - La unica estrategia concreta incluida es `PivotZoneTestStrategy`, con logica multi-timeframe basada en zonas pivote y breakouts. (ref: bot_trading/application/strategies/pivot_zone_test_strategy.py:PivotZoneTestStrategy)
-- Los tres entornos comparten la misma lista de simbolos/estrategias declarada en `config.py` (ver `DEFAULT_SYMBOLS` y `DEFAULT_STRATEGIES`); cada simbolo puede sobreescribir n1/n2/n3/size_pct/p para PivotZone sin duplicar configuracion por entorno. (ref: config.py:DEFAULT_SYMBOLS, config.py:DEFAULT_STRATEGIES)
+- Los tres entornos comparten la misma lista de simbolos/estrategias declarada en `config.py` (ver `DEFAULT_SYMBOLS` y `DEFAULT_STRATEGIES`); cada simbolo puede sobreescribir n1/n2/n3/size_pct para PivotZone sin duplicar configuracion por entorno. (ref: config.py:DEFAULT_SYMBOLS, config.py:DEFAULT_STRATEGIES)
 - El modo development recorre el mismo pipeline que produccion; la unica diferencia es la fuente de datos (CSVs en `data_development`) y que se usa `FakeBroker` para no enviar ordenes reales. (ref: config.py:ENVIRONMENTS, bot_trading/main.py:_build_broker, bot_trading/infrastructure/data_fetcher.py:DevelopmentCsvDataProvider)
 
 ## 2) Quickstart (instalacion, variables de entorno, comandos de ejecucion)
@@ -46,9 +46,10 @@
   - `VISUALIZER_AUTO_ENABLE=0|1` (forzar desactivar/activar autovisualizador).
   - `VISUALIZER_REFRESH_SECONDS=<n>` (intervalo de refresco en segundos; default `900`).
 - El visualizador mantiene buffers incrementales por simbolo:
-  - velas `M3`,
+  - velas `M3` (sin limite por defecto),
   - zonas pivote desde `logs/pivot_zones.log`,
   - entradas/fills/posicion desde `outputs/bot_events.jsonl`, proyectadas al eje temporal `M3`.
+- En CLI, `--max-candles` permite limitar velas en memoria; `0` o negativo desactiva el recorte.
 - Render directo del backtest:
   - `bot_trading/visualization/plot_bokeh.py` carga `backtest bot v7.0 syncro/plotting.py`.
   - El dibujo principal se hace con `Plot.max_min_plot(...)` para mantener la misma estetica que el backtest bot.
@@ -75,7 +76,7 @@
 ## 3) Arquitectura del repo (carpetas y responsabilidades)
 - `bot_trading/domain`: entidades y dataclasses de dominio (ordenes, posiciones, limites de riesgo). (ref: bot_trading/domain/entities.py)
 - `bot_trading/application`: logica de negocio del bot, motor, risk management, registry, estrategias. (ref: bot_trading/application/engine/bot_engine.py:TradingBot, bot_trading/application/risk_management.py:RiskManager, bot_trading/application/strategy_registry.py:StrategyRegistry, bot_trading/application/strategies/base.py:Strategy)
-- `bot_trading/infrastructure`: integraciones externas (MT5, datos, exportacion). (ref: bot_trading/infrastructure/mt5_client.py:MetaTrader5Client, bot_trading/infrastructure/data_fetcher.py:MarketDataService, bot_trading/infrastructure/file_exporter.py:ExcelExporter)
+- `bot_trading/infrastructure`: integraciones externas de MT5 y datos de mercado. (ref: bot_trading/infrastructure/mt5_client.py:MetaTrader5Client, bot_trading/infrastructure/data_fetcher.py:MarketDataService)
 - `tests`: suite de pruebas con pytest y scripts de verificacion manual. (ref: tests/*)
 - `data_development`: CSVs historicos de ejemplo para el proveedor de datos de desarrollo. (ref: data_development/*.csv, bot_trading/infrastructure/data_fetcher.py:DevelopmentCsvDataProvider)
 - `config.py`: configuracion declarativa por entornos, fuente de verdad consumida por el entrypoint principal. (ref: config.py, bot_trading/main.py:main)
@@ -116,7 +117,6 @@
 - `OrderExecutor.execute_order()` envia ordenes via `broker_client.send_market_order()` y actualiza un registro local de posiciones. (ref: bot_trading/application/engine/order_executor.py:OrderExecutor.execute_order)
 - Si el broker es MT5, `MetaTrader5Client.send_market_order()` usa `mt5.order_send()`, valida volumen/tipo y normaliza `SL/TP` de mercado segun `trade_stops_level` y `trade_freeze_level` para reducir rechazos `10016 Invalid stops`. (ref: bot_trading/infrastructure/mt5_client.py:MetaTrader5Client.send_market_order)
 - `PivotZoneTestStrategy` puede crear o modificar ordenes pendientes TP/SL (bracket) usando `broker_client.create_pending_order`, `cancel_order` y `modify_order` si existen. (ref: bot_trading/application/strategies/pivot_zone_test_strategy.py:_ensure_bracket_orders, bot_trading/infrastructure/mt5_client.py:MetaTrader5Client.create_pending_order)
-- El exportador `ExcelExporter` puede escribir trades a un archivo Excel si se usa manualmente. (ref: bot_trading/infrastructure/file_exporter.py:ExcelExporter.export_trades)
 
 ### 4.7 Cierre y cleanup
 - `main()` captura `KeyboardInterrupt` y registra estadisticas finales consultando el broker. (ref: bot_trading/main.py:main)
@@ -178,9 +178,6 @@
 - **Salidas**: DataFrames OHLCV, listas de posiciones/trades y `OrderResult`. (ref: bot_trading/infrastructure/mt5_client.py:MetaTrader5Client.get_open_positions, bot_trading/infrastructure/mt5_client.py:MetaTrader5Client.get_closed_trades)
 - **Errores comunes**: `MT5ConnectionError` si `mt5.initialize()` falla; `MT5DataError` si el simbolo no existe; rechazos `10016 Invalid stops` cuando `SL/TP` quedan demasiado cerca o del lado incorrecto (el cliente ahora ajusta niveles al minimo valido). (ref: bot_trading/infrastructure/mt5_client.py:MT5ConnectionError, bot_trading/infrastructure/mt5_client.py:MT5DataError, bot_trading/infrastructure/mt5_client.py:MetaTrader5Client._normalize_market_stops)
 
-### 5.11 `ExcelExporter`
-- **Que hace**: exporta `TradeRecord` a Excel si se invoca manualmente. (ref: bot_trading/infrastructure/file_exporter.py:ExcelExporter.export_trades)
-
 ## 6) Configuracion (detallada)
 
 ### 6.1 Fuentes de configuracion y precedencia actual
@@ -199,34 +196,34 @@
 - `BrokerConfig` campos: `use_real_broker`, `max_retries`, `retry_delay`, `load_env_credentials`, `env_prefix`, `server`, `login`, `password`. (ref: config.py:BrokerConfig)
 - `LoggingConfig` campos: `level`, `log_to_file`, `log_file_path`, `pivot_log_file_path`, `format`. (ref: config.py:LoggingConfig)
 - `RiskConfig` campos: `dd_global`, `dd_por_activo`, `dd_por_estrategia`, `initial_balance`, `max_margin_usage_percent`. (ref: config.py:RiskConfig)
-- `SymbolConfigEntry` campos: `name`, `min_timeframe`, y overrides opcionales por símbolo para PivotZone (`n1`, `n2`, `n3`, `size_pct`, `p`). (ref: config.py:SymbolConfigEntry)
-- `StrategyConfig` campos: `name`, `allowed_symbols` (si se deja vacío se autocompleta con todos los símbolos declarados), `tf_entry`, `tf_zone`, `tf_stop`, `n1`, `n2`, `n3`, `size_pct`, `p`, `timeframes`. (ref: config.py:StrategyConfig)
+- `SymbolConfigEntry` campos: `name`, `min_timeframe`, y overrides opcionales por símbolo para PivotZone (`n1`, `n2`, `n3`, `size_pct`). (ref: config.py:SymbolConfigEntry)
+- `StrategyConfig` campos: `name`, `allowed_symbols` (si se deja vacío se autocompleta con todos los símbolos declarados), `tf_entry`, `tf_zone`, `tf_stop`, `n1`, `n2`, `n3`, `size_pct`, `timeframes`. (ref: config.py:StrategyConfig)
 - `LoopConfig` campos: `timeframe_minutes`, `wait_after_close`, `skip_sleep_when_simulated`. (ref: config.py:LoopConfig)
 - `DataConfig` campos: `data_mode`, `data_development_dir`, `bootstrap_lookback_days_zone`, `bootstrap_lookback_days_entry`, `bootstrap_lookback_days_stop`, `csv_base_timeframe`. (ref: config.py:DataConfig)
 
 #### 6.3.1 Valores por entorno definidos en `ENVIRONMENTS`
-- Todos los entornos reutilizan `DEFAULT_SYMBOLS` y `DEFAULT_STRATEGIES`; la diferencia radica en broker/datos/logging/riesgo. Cada símbolo puede definir overrides (n1/n2/n3/size_pct/p) y la estrategia completa `allowed_symbols` automáticamente con la lista de símbolos configurados si se deja vacía.
+- Todos los entornos reutilizan `DEFAULT_SYMBOLS` y `DEFAULT_STRATEGIES`; la diferencia radica en broker/datos/logging/riesgo. Cada símbolo puede definir overrides (n1/n2/n3/size_pct) y la estrategia completa `allowed_symbols` automáticamente con la lista de símbolos configurados si se deja vacía.
 - `production`:
   - broker: `use_real_broker=True`, `max_retries=3`, `retry_delay=1.0`, `load_env_credentials=True`. (ref: config.py:ENVIRONMENTS)
   - logging: `level="INFO"`, `log_to_file=True`, `log_file_path="logs/production.log"`, `pivot_log_file_path="logs/pivot_zones.log"`. (ref: config.py:ENVIRONMENTS)
   - risk: `dd_global=30.0`, `dd_por_activo` EURUSD/GBPUSD/USDJPY=30.0, `dd_por_estrategia` PivotZoneTest=30.0, `initial_balance=20000.0` (default), `max_margin_usage_percent=80.0` (default). (ref: config.py:RiskConfig, config.py:ENVIRONMENTS)
-  - symbols/strategies: se cargan desde `DEFAULT_SYMBOLS`/`DEFAULT_STRATEGIES` (actualmente EURUSD/GBPUSD/USDJPY en M1 con overrides por símbolo, y PivotZoneTest con M1/M3). (ref: config.py:DEFAULT_SYMBOLS, config.py:DEFAULT_STRATEGIES)
-  - loop: `timeframe_minutes=1`, `wait_after_close=0`, `skip_sleep_when_simulated=False`. (ref: config.py:ENVIRONMENTS)
-  - data: `data_mode="production"`, `data_development_dir="data_development"`, `bootstrap_lookback_days_zone=14`, `bootstrap_lookback_days_entry=None`, `bootstrap_lookback_days_stop=None`, `csv_base_timeframe="M1"`. (ref: config.py:ENVIRONMENTS)
+  - symbols/strategies: se cargan desde `DEFAULT_SYMBOLS`/`DEFAULT_STRATEGIES` (actualmente EURUSD/GBPUSD/USDJPY en M3 con overrides por símbolo, y PivotZoneTest con entry/zone/stop en M3/M9/M3). (ref: config.py:DEFAULT_SYMBOLS, config.py:DEFAULT_STRATEGIES)
+  - loop: `timeframe_minutes=3`, `wait_after_close=0`, `skip_sleep_when_simulated=False`. (ref: config.py:ENVIRONMENTS)
+  - data: `data_mode="production"`, `data_development_dir="data_development"`, `bootstrap_lookback_days_zone=14`, `bootstrap_lookback_days_entry=None`, `bootstrap_lookback_days_stop=None`, `csv_base_timeframe="M3"`. (ref: config.py:ENVIRONMENTS)
 - `development`:
   - broker: `use_real_broker=False`, `max_retries=1`, `retry_delay=0.1`, `load_env_credentials=False`. (ref: config.py:ENVIRONMENTS)
   - logging: `level="DEBUG"`, `log_to_file=True`, `log_file_path="logs/development.log"`, `pivot_log_file_path="logs/pivot_zones.log"`. (ref: config.py:ENVIRONMENTS)
   - risk: mismos limites que production para activos y estrategia PivotZoneTest. (ref: config.py:ENVIRONMENTS)
   - symbols/strategies: `DEFAULT_SYMBOLS`/`DEFAULT_STRATEGIES` (iguales a producción). (ref: config.py:DEFAULT_SYMBOLS, config.py:DEFAULT_STRATEGIES)
-  - loop: `timeframe_minutes=1`, `wait_after_close=0`, `skip_sleep_when_simulated=True` por defecto (dev avanza sin sleeps; puedes ponerlo en False si quieres reloj real). (ref: config.py:ENVIRONMENTS)
-  - data: `data_mode="development"`, `data_development_dir="data_development"`, `bootstrap_lookback_days_zone=14`, `bootstrap_lookback_days_entry=None`, `bootstrap_lookback_days_stop=None`, `csv_base_timeframe="M1"`. (ref: config.py:ENVIRONMENTS)
+  - loop: `timeframe_minutes=3`, `wait_after_close=0`, `skip_sleep_when_simulated=True` por defecto (dev avanza sin sleeps; puedes ponerlo en False si quieres reloj real). (ref: config.py:ENVIRONMENTS)
+  - data: `data_mode="development"`, `data_development_dir="data_development"`, `bootstrap_lookback_days_zone=14`, `bootstrap_lookback_days_entry=None`, `bootstrap_lookback_days_stop=None`, `csv_base_timeframe="M3"`. (ref: config.py:ENVIRONMENTS)
 - `testing`:
   - broker: `use_real_broker=False`, `max_retries=1`, `retry_delay=0.0`, `load_env_credentials=False`. (ref: config.py:ENVIRONMENTS)
   - logging: `level="DEBUG"`, `log_to_file=False`, `pivot_log_file_path="logs/pivot_zones.log"`. (ref: config.py:ENVIRONMENTS)
   - risk: `dd_global=100.0` y sin limites por activo/estrategia. (ref: config.py:ENVIRONMENTS)
   - symbols/strategies: `DEFAULT_SYMBOLS`/`DEFAULT_STRATEGIES` (iguales a producción; permite probar múltiples símbolos/overrides en tests). (ref: config.py:DEFAULT_SYMBOLS, config.py:DEFAULT_STRATEGIES)
-  - loop: `timeframe_minutes=1`, `wait_after_close=0`, `skip_sleep_when_simulated=True`. (ref: config.py:ENVIRONMENTS)
-  - data: `data_mode="development"`, `data_development_dir="data_development"`, `bootstrap_lookback_days_zone=14`, `bootstrap_lookback_days_entry=None`, `bootstrap_lookback_days_stop=None`, `csv_base_timeframe="M1"`. (ref: config.py:ENVIRONMENTS)
+  - loop: `timeframe_minutes=3`, `wait_after_close=0`, `skip_sleep_when_simulated=True`. (ref: config.py:ENVIRONMENTS)
+  - data: `data_mode="development"`, `data_development_dir="data_development"`, `bootstrap_lookback_days_zone=14`, `bootstrap_lookback_days_entry=None`, `bootstrap_lookback_days_stop=None`, `csv_base_timeframe="M3"`. (ref: config.py:ENVIRONMENTS)
 
 #### 6.3.2 Validaciones y efectos en `validate_config()`
 - Verifica que `ACTIVE_ENV` exista y que haya al menos un simbolo. (ref: config.py:validate_config)
@@ -291,6 +288,21 @@
 - Pendiente: no hay roadmap explicito en el repo actualmente. (ref: AGENTS.md, config.py, bot_trading/*, tests/*)
 
 ## 13) Changelog de logica
+- Fecha: 2026-03-07
+  - Cambios:
+    - Se elimina codigo obsoleto sin impacto funcional: la primera definicion muerta de `FakeBroker.process_price_tick`, el shim `config.get_config()` y la excepcion no usada `RiskLimitExceeded`.
+    - Se elimina `bot_trading/infrastructure/file_exporter.py`, que ya no tenia integracion con el wiring activo ni consumidores internos.
+    - `bot_trading.replay_runner` pasa a forzar de forma efectiva `development` regenerando `config.settings` antes de importar el entrypoint.
+  - Archivos:
+    - bot_trading/main.py
+    - bot_trading/replay_runner.py
+    - config.py
+    - bot_trading/application/risk_management.py
+    - bot_trading/infrastructure/file_exporter.py
+    - README.md
+  - Impacto esperado:
+    - Menos codigo muerto y un runner auxiliar consistente con el entorno `development`, sin cambiar la logica de riesgo ni el flujo principal del bot.
+
 - Fecha: 2026-02-20
   - Cambios:
     - `PivotZoneTestStrategy` fija ATR interno en 14 para construir ancho de zona.
@@ -474,6 +486,22 @@
   - Impacto esperado:
     - Paridad mas cercana en cierres SL/TP entre bot y backtest.
 
+- Fecha: 2026-03-06
+  - Cambios:
+    - Se elimina de forma estricta el parámetro `p` de `config.py`, contratos de dominio (`SymbolConfig`) y wiring de estrategia.
+    - `PivotZoneTestStrategy` elimina `p` del constructor y de parámetros efectivos por símbolo.
+    - Tests de estrategia se actualizan para cubrir overrides de `n1/n2/n3/size_pct` sin `p`.
+  - Archivos:
+    - config.py
+    - bot_trading/domain/entities.py
+    - bot_trading/main.py
+    - bot_trading/visualization/runner.py
+    - bot_trading/application/strategies/pivot_zone_test_strategy.py
+    - tests/test_pivot_zone_test_strategy.py
+    - README.md
+  - Impacto esperado:
+    - Cambio breaking deliberado: configs antiguas con `p` dejan de estar soportadas.
+
 - Fecha: 2026-01-30
   - Cambios:
     - En `development` (CSV), los timeframes resampleados (p.ej. `M3`) descartan la Ãºltima vela parcial para evitar OHLC inestables que cambian con cada nueva vela `M1`.
@@ -507,7 +535,7 @@
     - Mayor trazabilidad de zonas pivote sin perder pipettes al inspeccionar los logs.
 - Fecha: 2026-01-29
   - Cambios:
-    - Se habilita configuracion por simbolo (n1/n2/n3/size_pct/p) reutilizada en los tres entornos mediante `DEFAULT_SYMBOLS`/`DEFAULT_STRATEGIES`.
+    - Se habilita configuracion por simbolo (n1/n2/n3/size_pct) reutilizada en los tres entornos mediante `DEFAULT_SYMBOLS`/`DEFAULT_STRATEGIES`.
     - Las estrategias completan `allowed_symbols` con todos los simbolos configurados si se deja vacio.
     - PivotZoneTest aplica overrides por simbolo y los tests cubren sizing y overrides.
   - Archivos:

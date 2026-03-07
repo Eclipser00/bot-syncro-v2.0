@@ -134,7 +134,6 @@ def build_breakout_context(symbol_params=None):
         n2=100,
         n3=2,
         size_pct=0.05,
-        p=0.5,
         symbol_params=symbol_params or {},
     )
     symbol = "EURUSD"
@@ -264,7 +263,6 @@ def test_breakout_long_requires_origin_filter():
         n1=3,
         n2=100,
         n3=2,
-        p=0.5,
     )
     symbol = "EURUSD"
     strategy._ensure_symbol_state(symbol)
@@ -411,9 +409,8 @@ def test_resolve_params_applies_symbol_overrides():
         n2=80,
         n3=4,
         size_pct=0.04,
-        p=0.45,
         symbol_params={
-            "GBPUSD": {"n1": 21, "n2": 150, "n3": 6, "size_pct": 0.1, "p": 0.35}
+            "GBPUSD": {"n1": 21, "n2": 150, "n3": 6, "size_pct": 0.1}
         },
     )
 
@@ -422,14 +419,12 @@ def test_resolve_params_applies_symbol_overrides():
     assert params_gbp.n2 == 150
     assert params_gbp.n3 == 6
     assert params_gbp.size_pct == pytest.approx(0.1)
-    assert params_gbp.p == pytest.approx(0.35)
 
     params_eur = strategy._resolve_params("EURUSD")
     assert params_eur.n1 == 10
     assert params_eur.n2 == 80
     assert params_eur.n3 == 4
     assert params_eur.size_pct == pytest.approx(0.04)
-    assert params_eur.p == pytest.approx(0.45)
 
 
 def test_symbol_size_override_changes_lot_size():

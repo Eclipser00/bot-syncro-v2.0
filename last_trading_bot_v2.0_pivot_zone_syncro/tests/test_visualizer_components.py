@@ -106,6 +106,30 @@ def test_state_store_projecta_eventos_a_m3() -> None:
     assert state.entry_events[0]["ts_m3"].tz_convert(timezone.utc).minute == 6
 
 
+def test_state_store_max_candles_cero_desactiva_recorte() -> None:
+    idx = pd.date_range("2026-02-11 00:00:00+00:00", periods=6, freq="3min")
+    candles = pd.DataFrame(
+        {
+            "open": [1.0, 1.1, 1.2, 1.3, 1.4, 1.5],
+            "high": [1.1, 1.2, 1.3, 1.4, 1.5, 1.6],
+            "low": [0.9, 1.0, 1.1, 1.2, 1.3, 1.4],
+            "close": [1.05, 1.15, 1.25, 1.35, 1.45, 1.55],
+            "volume": [10, 11, 12, 13, 14, 15],
+        },
+        index=idx,
+    )
+
+    store = VisualizerStateStore(symbols=["EURUSD"], max_candles=0, max_events=100)
+    store.update_candles("EURUSD", candles.iloc[:3])
+    store.update_candles("EURUSD", candles.iloc[3:])
+
+    state = store.get_symbol_state("EURUSD")
+    assert state is not None
+    assert len(state.candles_m3) == 6
+    assert state.candles_m3.index[0] == idx[0]
+    assert state.candles_m3.index[-1] == idx[-1]
+
+
 def test_safe_write_html_no_crashea_si_archivo_bloqueado(tmp_path, monkeypatch) -> None:
     output = tmp_path / "plot.html"
 

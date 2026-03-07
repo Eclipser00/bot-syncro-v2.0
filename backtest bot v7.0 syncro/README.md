@@ -119,6 +119,43 @@ Notas importantes:
 
 ## Changelog de logica
 
+- Fecha: 2026-03-07
+  - Cambios:
+    - Se elimina `sound.py`, un helper de pitidos sin integracion con el flujo de backtest, parity, plotting ni descarga de datos.
+  - Archivos:
+    - sound.py
+    - README.md
+  - Impacto esperado:
+    - Menos codigo accesorio sin uso dentro del proyecto de backtest.
+
+- Fecha: 2026-03-06
+  - Cambios:
+    - `config.py` cambia `TIMEZONE` de `Europe/Madrid` a `UTC` para alinear el resample M9 con `last_trading_bot` y `parity_runner`.
+    - Se documenta que la referencia temporal del backtest debe mantenerse en UTC cuando se busque paridad de zonas, eventos y plots.
+    - `backtest.py` reemplaza `cerebro.resampledata(...)` por resample explicito con pandas (`label='right'`, `closed='right'`, descarte de ultima vela parcial) para `PivotZoneTest`.
+    - `main.py` corrige escala de comision: ahora convierte `config.COMMISSION` de porcentaje a fraccion (`/100`) antes de pasarla al motor.
+  - Archivos:
+    - config.py
+    - backtest.py
+    - main.py
+    - README.md
+  - Impacto esperado:
+    - Menor divergencia visual entre `plots/*.html` del backtest y `outputs/visualizer*.html` del bot live en modo development.
+    - Parametros efectivos de ejecucion (resample/comision) consistentes entre `config.py` y `parity_runner.py`.
+
+- Fecha: 2026-03-06
+  - Cambios:
+    - `PivotZoneTest` elimina el parámetro de estrategia `p`; el set de params queda en `n1/n2/n3/size_pct`.
+    - `parity_runner.py` deja de leer/inyectar `p` desde config y de loguearlo en `[PARAMS]`.
+    - Se retira código muerto de confirmación ligado a `p` (`_close_pos`, `_outside_long`, `_outside_short`).
+    - Se mantiene intacto el uso de `comm_info.p` / `ci.p` de Backtrader (API de comisión), que no pertenece al contrato de estrategia.
+  - Archivos:
+    - strategies.py
+    - parity_runner.py
+    - README.md
+  - Impacto esperado:
+    - Contrato de parámetros más simple y consistente con el bot live, sin tocar semántica de comisiones.
+
 - Fecha: 2026-02-27
   - Cambios:
     - Se agrega `download_mt5_data.py` para descargar OHLCV desde MetaTrader5 con toggles en archivo.

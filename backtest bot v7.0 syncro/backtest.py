@@ -195,10 +195,10 @@ class Backtest:
             return empty_trades, pd.DataFrame(), pd.DataFrame()
 
         # 2.1) Auto-resample para PivotZoneTest cuando solo llega un feed base.
-        #      Objetivo: construir TF_zone desde el timeframe base configurado.
+        #      Objetivo: construir TF_zone con semantica equivalente a parity/live
+        #      (pandas resample label=right/closed=right + descarte de ultima vela parcial).
         strategy_name = getattr(strategy_cls, "__name__", str(strategy_cls))
         if datas_added == 1 and strategy_name == "PivotZoneTest":
-            base_feed = cerebro.datas[0]
             base_minutes = 1.0
             try:
                 if first_df is not None and len(first_df.index) >= 2:
@@ -211,20 +211,50 @@ class Backtest:
 
             target_zone_minutes = float(getattr(config, "PIVOT_TF_ZONE_MINUTES", 9.0))
             compression = int(round(target_zone_minutes / base_minutes))
-            if compression > 1:
-                zone_feed = cerebro.resampledata(
-                    base_feed,
-                    timeframe=bt.TimeFrame.Minutes,
-                    compression=compression,
-                    name="data1",
+            if compression > 1 and first_df is not None and not first_df.empty:
+                zone_minutes_int = int(round(target_zone_minutes))
+                df_zone = (
+                    first_df.resample(f"{zone_minutes_int}min", label="right", closed="right")
+                    .agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
+                    .dropna()
                 )
-                zone_feed._name = "data1"
-                zone_feed._symbol = getattr(base_feed, "_symbol", "data0")
-                zone_feed._timeframe_label = f"M{int(round(target_zone_minutes))}"
-                _log(
-                    "[Backtest] Auto-resample PivotZoneTest activado: "
-                    f"base=M{base_minutes:.0f} -> zone=M{int(round(target_zone_minutes))} (compression={compression})"
-                )
+
+                # Descarta vela final parcial para alinear con parity_runner/live.
+                try:
+                    expected = max(1, int(round(target_zone_minutes / base_minutes)))
+                    if len(df_zone) > 0 and expected > 0:
+                        last_label = df_zone.index[-1]
+                        bin_start = last_label - pd.Timedelta(minutes=target_zone_minutes)
+                        count = first_df[(first_df.index > bin_start) & (first_df.index <= last_label)].shape[0]
+                        if count < expected:
+                            df_zone = df_zone.iloc[:-1]
+                except Exception as exc:
+                    _log(f"[Backtest][WARN] No se pudo validar ultima vela parcial TF_zone: {exc}")
+
+                if not df_zone.empty:
+                    zone_feed = bt.feeds.PandasData(
+                        dataname=df_zone,
+                        open="open",
+                        high="high",
+                        low="low",
+                        close="close",
+                        volume="volume",
+                        datetime=None,
+                        timeframe=bt.TimeFrame.Minutes,
+                    )
+                    zone_feed._name = "data1"
+                    zone_feed._symbol = getattr(cerebro.datas[0], "_symbol", "data0")
+                    zone_feed._timeframe_label = f"M{zone_minutes_int}"
+                    cerebro.adddata(zone_feed)
+                    _log(
+                        "[Backtest] Auto-resample PivotZoneTest activado: "
+                        f"base=M{base_minutes:.0f} -> zone=M{zone_minutes_int} (compression={compression})"
+                    )
+                else:
+                    _log(
+                        "[Backtest][WARN] Auto-resample PivotZoneTest genero TF_zone vacio; "
+                        "se mantiene solo feed base."
+                    )
             else:
                 _log(
                     "[Backtest][WARN] Auto-resample PivotZoneTest omitido: "

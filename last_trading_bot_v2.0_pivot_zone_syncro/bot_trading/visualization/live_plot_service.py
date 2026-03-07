@@ -41,6 +41,7 @@ class AutoVisualizerService:
     bot_events_path: Path
     refresh_seconds: int = 5
     start_from_end: bool = True
+    max_candles: int | None = None
     closed_trades_provider: Callable[[datetime, datetime], list[TradeRecord]] | None = None
     closed_trades_lookback_days: int = 15
 
@@ -48,7 +49,9 @@ class AutoVisualizerService:
         self.refresh_seconds = max(1, int(self.refresh_seconds))
         self.closed_trades_lookback_days = max(1, int(self.closed_trades_lookback_days))
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.state_store = VisualizerStateStore(symbols=[s.name for s in self.symbols])
+        if self.max_candles is not None and int(self.max_candles) <= 0:
+            self.max_candles = None
+        self.state_store = VisualizerStateStore(symbols=[s.name for s in self.symbols], max_candles=self.max_candles)
         self.next_refresh = datetime.now(timezone.utc)
         self._has_rendered_once = False
         if self.start_from_end:

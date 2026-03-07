@@ -175,7 +175,6 @@ class _PivotParams:
     n2: int
     n3: int
     size_pct: float
-    p: float
 
 
 @dataclass
@@ -208,7 +207,6 @@ class PivotZoneTestStrategy:
     n2: int = 60
     n3: int = 3
     size_pct: float = 0.05
-    p: float = 0.50
 
     # Estado persistente por símbolo (no se borra)
     _saved_zones_by_symbol: Dict[str, List[Dict[str, float]]] = field(default_factory=dict, init=False)
@@ -257,7 +255,6 @@ class PivotZoneTestStrategy:
             n2=int(overrides.get("n2", self.n2)),
             n3=int(overrides.get("n3", self.n3)),
             size_pct=float(overrides.get("size_pct", self.size_pct)),
-            p=float(overrides.get("p", self.p)),
         )
         if overrides:
             logger.debug(
@@ -730,7 +727,7 @@ class PivotZoneTestStrategy:
         return bot if d_bot <= d_top else top
 
     def _check_breakout(
-        self, df_entry_closed: pd.DataFrame, zones: List[Dict[str, float]], p: float
+        self, df_entry_closed: pd.DataFrame, zones: List[Dict[str, float]]
     ) -> Optional[Tuple[Dict[str, float], int]]:
         if not zones:
             logger.debug("[%s] Sin zonas guardadas: no se evalúa breakout", self.name)
@@ -1384,7 +1381,7 @@ class PivotZoneTestStrategy:
 
         # 4) Si no hay posición: buscar entrada por ruptura
         zones = self._saved_zones_by_symbol.get(symbol, [])
-        breakout = self._check_breakout(df_entry, zones, params.p)
+        breakout = self._check_breakout(df_entry, zones)
         if breakout is None:
             return signals
 

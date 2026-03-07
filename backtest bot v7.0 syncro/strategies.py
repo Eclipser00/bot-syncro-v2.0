@@ -1196,7 +1196,6 @@ class PivotZoneTest(_BaseLoggedStrategy):
         ('n2', 60),         # Ancho zona % ATR
         ('n3', 3),          # Min pivotes para zona valida
         ('size_pct', 0.05), # Riesgo/porcentaje (usado por size_percent_by_stop)
-        ('p', 0.50),        # Filtro â€œclose cerca del extremoâ€ (0.70 = bastante estricto)
     )
 
     plotinfo = dict(subplot=False)
@@ -1327,7 +1326,7 @@ class PivotZoneTest(_BaseLoggedStrategy):
             f"TF_entry={getattr(self.TF_entry, '_name', 'data0')} "
             f"TF_zone={getattr(self.TF_zone,  '_name', 'data1')} "
             f"TF_stop={getattr(self.TF_stop,  '_name', 'data2')} | "
-            f"min_distance_mult={self.p.n1} n2={self.p.n2} n3={self.p.n3} size={self.p.size_pct} p={self.p.p}"
+            f"min_distance_mult={self.p.n1} n2={self.p.n2} n3={self.p.n3} size={self.p.size_pct}"
         )
 
     def _emit_event(self, **kwargs):
@@ -1495,37 +1494,6 @@ class PivotZoneTest(_BaseLoggedStrategy):
             if bot <= p <= top:
                 return p
         return None
-
-    # ============================================================
-    # HELPERS DE CONFIRMACIÃ“N (TF_entry)
-    # ============================================================
-    def _close_pos(self, idx: int = 0) -> float:
-        """
-        pos = (Close - Low) / (High - Low)
-        Si high==low (rango 0), devolvemos 0.5 por neutralidad.
-        """
-        h = float(self.TF_entry.high[idx])
-        l = float(self.TF_entry.low[idx])
-        c = float(self.TF_entry.close[idx])
-
-        rng = h - l
-        if rng <= 0.0:
-            return 0.5
-        return (c - l) / rng
-
-    def _outside_long(self, top: float, idx: int = 0) -> bool:
-        """
-        Para LONG: cierre fuera + close cerca del high (pos > p).
-        """
-        c = float(self.TF_entry.close[idx])
-        return (c > float(top)) and (self._close_pos(idx) > float(self.p.p))
-
-    def _outside_short(self, bot: float, idx: int = 0) -> bool:
-        """
-        Para SHORT: cierre fuera + close cerca del low (pos < 1-p).
-        """
-        c = float(self.TF_entry.close[idx])
-        return (c < float(bot)) and (self._close_pos(idx) < (1.0 - float(self.p.p)))
 
     # ============================================================
     # HELPERS DE Ã“RDENES / RESET

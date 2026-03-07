@@ -252,7 +252,8 @@ def main() -> None:
     # ------------------------------------------------------------------
     broker_cfg = {
         "cash": float(getattr(config, "CASH", 100000.0)),
-        "commission": float(getattr(config, "COMMISSION", 0.0)),
+        # config.COMMISSION esta expresada en porcentaje (ej. 0.0025 = 0.0025%)
+        "commission": float(getattr(config, "COMMISSION", 0.0)) / 100.0,
         "margin": 1.0 / max(1.0, float(getattr(config, "MARGIN", 1))),
         "trade_on_close": bool(getattr(config, "TRADE_ON_CLOSE", True))
     }
@@ -731,24 +732,24 @@ def main() -> None:
     # FIN
     # ------------------------------------------------------------------
     print("\n" + "="*70)
-    print("[MAIN] ✓ FLUJO PRINCIPAL COMPLETADO")
+    print("[MAIN] FLUJO PRINCIPAL COMPLETADO")
     print("="*70)
     print("\nResultados guardados en:")
-    print("  - /grid      → Grids de optimización (.xlsx)")
-    print("  - /heatmaps  → Heatmaps interactivos (.html)")
-    print("  - /stats     → Métricas por estrategia (.xlsx)")
-    print("  - /trades    → Trades por estrategia (.xlsx)")
-    print("  - /plots     → Gráficos interactivos (.html)")
-    print("  - /results   → Resumen consolidado (.xlsx)")
+    print("  - /grid       Grids de optimización (.xlsx)")
+    print("  - /heatmaps   Heatmaps interactivos (.html)")
+    print("  - /stats      Métricas por estrategia (.xlsx)")
+    print("  - /trades     Trades por estrategia (.xlsx)")
+    print("  - /plots      Gráficos interactivos (.html)")
+    print("  - /results    Resumen consolidado (.xlsx)")
     
     if getattr(config, "USE_CSCV", False):
-        print("  - /cscv      → Análisis CSCV (.xlsx)")
+        print("  - /cscv       Análisis CSCV (.xlsx)")
     if getattr(config, "USE_STRESS", False):
-        print("  - /stress    → Stress tests (.xlsx)")
+        print("  - /stress     Stress tests (.xlsx)")
     if getattr(config, "USE_WF", False):
-        print("  - /wf        → Walk-Forward (.xlsx)")
+        print("  - /wf         Walk-Forward (.xlsx)")
     
-    print("\n¡Backtest completado con éxito!\n")
+    print("\nBacktest completado con exito.\n")
 
 
 # ====================================================================================
@@ -756,3 +757,4 @@ def main() -> None:
 # ====================================================================================
 if __name__ == "__main__":
     main()
+

@@ -105,7 +105,7 @@ DATA_FOLDER_01 = 'data01'            # Carpeta con archivos CSV
 #DATA_FOLDER_06 = 'data06'
 #DATA_FOLDER_07 = 'data07'
 # ... 
-TIMEZONE = "Europe/Madrid"# Carpeta con archivos CSV
+TIMEZONE = "UTC"  # Alineado con live/parity para evitar desfases de resample M9
 PERIODS_PER_YEAR = 525600 # Se utiliza para calcular las métricas de rendimiento, como Sharpe Ratio, Sortino Ratio, etc..
 # PERIODS_PER_YEAR = 24*252       # 1h bolsa
 # PERIODS_PER_YEAR = 390*252      # 1m bolsa USA (6.5h/día)

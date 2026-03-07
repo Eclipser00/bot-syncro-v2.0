@@ -120,7 +120,6 @@ def _build_symbol_configs(mode: str) -> list[SymbolConfig]:
                 n2=getattr(sym_cfg, "n2", None),
                 n3=getattr(sym_cfg, "n3", None),
                 size_pct=getattr(sym_cfg, "size_pct", None),
-                p=getattr(sym_cfg, "p", None),
             )
         )
     return symbols
@@ -133,7 +132,7 @@ def build_runner(
     output_html: str = "outputs/visualizer_m3.html",
     pivot_log: str = "logs/pivot_zones.log",
     bot_events: str = "outputs/bot_events.jsonl",
-    max_candles: int = 3000,
+    max_candles: int | None = None,
     max_events: int = 1500,
     max_cycles: int | None = None,
 ) -> VisualizerRunner:

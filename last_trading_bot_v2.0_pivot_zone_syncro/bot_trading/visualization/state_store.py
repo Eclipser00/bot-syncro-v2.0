@@ -49,11 +49,14 @@ class VisualizerStateStore:
     def __init__(
         self,
         symbols: list[str],
-        max_candles: int = 3000,
+        max_candles: int | None = None,
         max_events: int = 1500,
         max_zones: int = 300,
     ) -> None:
-        self.max_candles = max_candles
+        if max_candles is None:
+            self.max_candles = None
+        else:
+            self.max_candles = None if int(max_candles) <= 0 else int(max_candles)
         self.max_events = max_events
         self.max_zones = max_zones
         self._states: dict[str, SymbolState] = {symbol: SymbolState() for symbol in symbols}
@@ -81,7 +84,10 @@ class VisualizerStateStore:
         else:
             merged = pd.concat([state.candles_m3, frame]).sort_index()
             merged = merged.loc[~merged.index.duplicated(keep="last")]
-        state.candles_m3 = merged.tail(self.max_candles)
+        if self.max_candles is None:
+            state.candles_m3 = merged
+        else:
+            state.candles_m3 = merged.tail(self.max_candles)
 
     def update_candles_batch(self, candles_by_symbol: dict[str, pd.DataFrame]) -> None:
         for symbol, df in candles_by_symbol.items():

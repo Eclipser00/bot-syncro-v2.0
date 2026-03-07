@@ -165,13 +165,6 @@ class FakeBroker:
 
         return OrderResult(success=True, order_id=order_id, fill_price=fill_price)
 
-    def process_price_tick(self, symbol: str, close: float, high: float | None = None, low: float | None = None) -> None:
-        """Actualiza el último precio conocido para fills deterministas en FakeBroker."""
-        try:
-            self._last_price[symbol] = float(close)
-        except Exception:
-            pass
-
     def create_pending_order(
         self,
         symbol: str,
@@ -706,7 +699,6 @@ def _build_symbols() -> List[SymbolConfig]:
                 n2=getattr(sym_cfg, "n2", None),
                 n3=getattr(sym_cfg, "n3", None),
                 size_pct=getattr(sym_cfg, "size_pct", None),
-                p=getattr(sym_cfg, "p", None),
             )
         )
     return symbols
@@ -716,7 +708,7 @@ def _collect_symbol_params() -> dict[str, dict[str, float]]:
     params: dict[str, dict[str, float]] = {}
     for sym_cfg in settings.symbols:
         overrides: dict[str, float] = {}
-        for field_name in ("n1", "n2", "n3", "size_pct", "p"):
+        for field_name in ("n1", "n2", "n3", "size_pct"):
             value = getattr(sym_cfg, field_name, None)
             if value is not None:
                 if field_name in {"n1", "n2", "n3"}:
@@ -748,7 +740,6 @@ def _build_strategies(broker) -> List[PivotZoneTestStrategy]:
                 n2=strat_cfg.n2,
                 n3=strat_cfg.n3,
                 size_pct=strat_cfg.size_pct,
-                p=strat_cfg.p,
                 symbol_params=symbol_params,
             )
         )

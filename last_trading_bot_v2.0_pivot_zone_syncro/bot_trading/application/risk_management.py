@@ -10,10 +10,6 @@ from bot_trading.domain.entities import AccountInfo, RiskLimits, TradeRecord
 logger = logging.getLogger(__name__)
 
 
-class RiskLimitExceeded(Exception):
-    """Excepción para indicar que un límite de riesgo ha sido violado."""
-
-
 @dataclass
 class RiskManager:
     """Evalúa límites de riesgo globales, por símbolo y por estrategia."""
