@@ -19,12 +19,73 @@ import math
 import statistics
 from typing import Optional, Tuple, Dict, List
 import os
+import json
 from pathlib import Path
 from event_logger import EventLogger
 try:
     import talib  # type: ignore
 except Exception:
     talib = None
+
+_INSTRUMENT_SPECS_PATH = Path(__file__).resolve().parents[1] / "shared" / "instrument_specs.json"
+_RISK_FRACTION_SCALE = 0.1
+_RISK_BAND_MIN = 0.8
+_RISK_BAND_MAX = 1.2
+_STOP_REFERENCE_PCT = 0.01
+_INSTRUMENT_SPECS_CACHE: Optional[Dict[str, Dict[str, float]]] = None
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    try:
+        casted = float(value)
+    except Exception:
+        return None
+    if not math.isfinite(casted):
+        return None
+    return casted
+
+
+def _load_instrument_specs() -> Dict[str, Dict[str, float]]:
+    global _INSTRUMENT_SPECS_CACHE
+    if _INSTRUMENT_SPECS_CACHE is not None:
+        return _INSTRUMENT_SPECS_CACHE
+    try:
+        raw = json.loads(_INSTRUMENT_SPECS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        _INSTRUMENT_SPECS_CACHE = {}
+        return _INSTRUMENT_SPECS_CACHE
+
+    specs: Dict[str, Dict[str, float]] = {}
+    for symbol, values in raw.items():
+        if not isinstance(values, dict):
+            continue
+        normalized: Dict[str, float] = {}
+        for key, value in values.items():
+            casted = _safe_float(value)
+            if casted is not None:
+                normalized[key] = casted
+        specs[str(symbol).upper()] = normalized
+    _INSTRUMENT_SPECS_CACHE = specs
+    return specs
+
+
+def _snapshot_instrument_spec(symbol: str) -> Dict[str, float]:
+    return dict(_load_instrument_specs().get(str(symbol).upper(), {}))
+
+
+def _size_pct_to_risk_fraction(size_pct: float) -> float:
+    return max(0.0, float(size_pct) * _RISK_FRACTION_SCALE)
+
+
+def _stop_modulation(entry_price: float, stop_price: float) -> float:
+    entry = abs(float(entry_price))
+    if entry <= 0:
+        return 1.0
+    dist_pct = abs(float(entry_price) - float(stop_price)) / entry
+    if dist_pct <= 0:
+        return 1.0
+    factor = math.sqrt(_STOP_REFERENCE_PCT / dist_pct)
+    return float(max(_RISK_BAND_MIN, min(_RISK_BAND_MAX, factor)))
 
 class size_constructor:
     """
@@ -132,6 +193,11 @@ class size_constructor:
 
         current = float(getattr(pos, 'size', 0.0)) if pos is not None else 0.0
         return {'price': price, 'equity': equity, 'current': current}
+
+    def instrument_spec(self, data=None) -> Dict[str, float]:
+        data = data or self.data
+        symbol = str(getattr(data, "_symbol", getattr(data, "_name", ""))).upper()
+        return _snapshot_instrument_spec(symbol)
 
 
 class Pivot3Candle(bt.Indicator):
@@ -621,78 +687,61 @@ class _BaseLoggedStrategy(bt.Strategy, size_constructor):
         pct_cap: float = 0.50
     ) -> float:
         """
-        Dimensiona con `risk_pct` como nocional objetivo y ajuste suave por stop.
-
-        PolÃ­tica:
-        - Base: nocional objetivo ~= equity * risk_pct * leverage.
-        - ModulaciÃ³n por stop: tamaÃ±o sube/baja suavemente segÃºn distancia relativa al stop.
-        - Cap nocional superior para limitar exposiciones extremas.
+        Dimensiona con `size_pct` como riesgo sobre la cuenta al tocar el stop.
         """
         data = data or self.data
         sd = self.size_data(data)
         price = sd['price']
         equity = sd['equity']
-        
+
         if risk_pct <= 0 or stop_price is None or price <= 0 or equity <= 0:
             return 0.0
 
-        # Distancia efectiva al stop
-        D = abs(price - float(stop_price))
-        if D <= 0:
+        dist = abs(price - float(stop_price))
+        if dist <= 0:
             return 0.0
         if cushion > 0:
-            D *= (1.0 + float(cushion))
+            dist *= (1.0 + float(cushion))
 
-        # Obtener leverage (ANTES de usarlo).
-        leverage, _ = self.size_margin(data)
-        leverage = max(1.0, float(leverage))
+        spec = self.instrument_spec(data)
+        tick_size = _safe_float(spec.get("trade_tick_size"))
+        tick_value = _safe_float(spec.get("trade_tick_value"))
+        volume_min = _safe_float(spec.get("volume_min")) or 0.0
+        volume_step = _safe_float(spec.get("volume_step"))
+        volume_max = _safe_float(spec.get("volume_max")) or float("inf")
+        margin_per_lot = _safe_float(spec.get("margin_per_lot"))
 
-        try:
-            stop_ref_pct = float(os.getenv("SIZE_STOP_REFERENCE_PCT", "0.00075"))
-        except Exception:
-            stop_ref_pct = 0.00075
-        try:
-            factor_min = float(os.getenv("SIZE_STOP_FACTOR_MIN", "0.80"))
-            factor_max = float(os.getenv("SIZE_STOP_FACTOR_MAX", "1.20"))
-        except Exception:
-            factor_min, factor_max = 0.80, 1.20
-        f_lo = min(factor_min, factor_max)
-        f_hi = max(factor_min, factor_max)
+        if tick_size is None or tick_value is None or tick_size <= 0 or tick_value <= 0:
+            return 0.0
 
-        target_notional = equity * abs(risk_pct) * leverage
-        base_size = target_notional / price
-        dist_pct = D / price
-        stop_factor = 1.0
-        if stop_ref_pct > 0 and dist_pct > 0:
-            stop_factor = math.sqrt(stop_ref_pct / dist_pct)
-            stop_factor = max(f_lo, min(stop_factor, f_hi))
-        size = base_size * stop_factor
+        risk_fraction = _size_pct_to_risk_fraction(abs(risk_pct))
+        if risk_fraction <= 0:
+            return 0.0
 
-        default_cap_pct = min(1.0, max(abs(risk_pct), abs(risk_pct) * 2.0))
-        cap_pct = default_cap_pct if default_cap_pct > 0 else float(pct_cap)
-        if os.getenv("PARITY_SIZING", "0") == "1":
-            try:
-                pct_env = float(os.getenv("PARITY_PCT_CAP", "") or 0)
-                if pct_env > 0:
-                    cap_pct = pct_env
-            except Exception:
-                pass
-        else:
-            cap_env = os.getenv("SIZE_NOTIONAL_CAP_PCT")
-            if cap_env:
-                try:
-                    cap_pct = float(cap_env)
-                except Exception:
-                    pass
+        modulation = _stop_modulation(price, float(stop_price))
+        effective_risk_fraction = risk_fraction * modulation
+        risk_budget = equity * effective_risk_fraction
 
-        max_size_by_cap = (equity * float(cap_pct) * leverage) / price if leverage > 0 else 0.0
-        if max_size_by_cap > 0:
-            size = min(size, max_size_by_cap)
+        ticks_to_stop = dist / tick_size
+        if ticks_to_stop <= 0:
+            return 0.0
 
-        # Ajustar a pasos y mÃ­nimos permitidos.
-        size = self.size_fractal(size, data=data, lot_step=None, min_size=0.0)
-        
-        return max(0.0, float(size))
+        loss_per_lot = ticks_to_stop * tick_value
+        if loss_per_lot <= 0:
+            return 0.0
+
+        size = risk_budget / loss_per_lot
+
+        if margin_per_lot is not None and margin_per_lot > 0:
+            size = min(size, equity / margin_per_lot)
+
+        size = min(size, volume_max)
+        size = self.size_fractal(size, data=data, lot_step=volume_step, min_size=0.0)
+        size = max(0.0, float(size))
+
+        if size < volume_min:
+            return 0.0
+        return size
 
     def _export_indicators_helper(self, *indicators, names=None):
         """

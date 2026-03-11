@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
@@ -15,6 +16,9 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+_INSTRUMENT_SPECS_PATH = Path(__file__).resolve().parents[2] / "shared" / "instrument_specs.json"
+_INSTRUMENT_SPECS_CACHE: dict[str, dict[str, float]] | None = None
 
 from config import settings, validate_config
 from bot_trading.application.engine.bot_engine import TradingBot
@@ -38,6 +42,31 @@ from bot_trading.infrastructure.mt5_client import MetaTrader5Client, MT5Connecti
 from bot_trading.visualization.live_plot_service import AutoVisualizerService, resolve_bot_events_path
 
 logger = logging.getLogger(__name__)
+
+
+def _load_instrument_specs() -> dict[str, dict[str, float]]:
+    global _INSTRUMENT_SPECS_CACHE
+    if _INSTRUMENT_SPECS_CACHE is not None:
+        return _INSTRUMENT_SPECS_CACHE
+    try:
+        raw = json.loads(_INSTRUMENT_SPECS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        _INSTRUMENT_SPECS_CACHE = {}
+        return _INSTRUMENT_SPECS_CACHE
+
+    specs: dict[str, dict[str, float]] = {}
+    for symbol, values in raw.items():
+        if not isinstance(values, dict):
+            continue
+        normalized: dict[str, float] = {}
+        for key, value in values.items():
+            try:
+                normalized[key] = float(value)
+            except Exception:
+                continue
+        specs[str(symbol).upper()] = normalized
+    _INSTRUMENT_SPECS_CACHE = specs
+    return specs
 
 
 class FakeBroker:
@@ -550,13 +579,14 @@ class FakeBroker:
     def _get_symbol_info(self, symbol: str) -> SimpleNamespace:
         """Devuelve info basica del simbolo para calcular lotes en modo paper."""
         if symbol not in self._symbol_info:
-            self._symbol_info[symbol] = SimpleNamespace(
-                trade_tick_value=1.0,
-                trade_tick_size=0.0001,
-                volume_min=0.01,
-                volume_step=0.01,
-                volume_max=10.0,
-            )
+            spec = dict(_load_instrument_specs().get(str(symbol).upper(), {}))
+            spec.setdefault("trade_tick_value", 10.0)
+            spec.setdefault("trade_tick_size", 0.0001)
+            spec.setdefault("volume_min", 0.01)
+            spec.setdefault("volume_step", 0.01)
+            spec.setdefault("volume_max", 100.0)
+            spec.setdefault("margin_per_lot", 20000.0)
+            self._symbol_info[symbol] = SimpleNamespace(**spec)
         return self._symbol_info[symbol]
 
     def consume_filled_market_orders(self) -> list:

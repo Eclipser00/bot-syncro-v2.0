@@ -15,6 +15,7 @@
 - En modo development, `FakeBroker` simula fills de SL/TP usando el OHLC mas reciente (via `process_price_tick`); para paridad se puede forzar cierre "solo en close" con `PARITY_CLOSE_ON_CLOSE=1`, diferir el cierre 1 vela con `PARITY_CLOSE_DELAY=1`, registrar el fill al precio de cierre con `PARITY_CLOSE_PRICE_ON_CLOSE=1`, y omitir la validacion de SL/TP con `PARITY_SKIP_SLTP_VALIDATION=1`. (ref: bot_trading/main.py:FakeBroker.process_price_tick, bot_trading/application/engine/bot_engine.py:TradingBot.run_once, bot_trading/application/strategies/pivot_zone_test_strategy.py:PivotZoneTestStrategy)
 - La unica estrategia concreta incluida es `PivotZoneTestStrategy`, con logica multi-timeframe basada en zonas pivote y breakouts. (ref: bot_trading/application/strategies/pivot_zone_test_strategy.py:PivotZoneTestStrategy)
 - Los tres entornos comparten la misma lista de simbolos/estrategias declarada en `config.py` (ver `DEFAULT_SYMBOLS` y `DEFAULT_STRATEGIES`); cada simbolo puede sobreescribir n1/n2/n3/size_pct para PivotZone sin duplicar configuracion por entorno. (ref: config.py:DEFAULT_SYMBOLS, config.py:DEFAULT_STRATEGIES)
+- `size_pct` ya no representa exposicion nocional: ahora significa riesgo base de cuenta al saltar el SL. Convencion vigente: `size_pct=0.1` equivale a `1%` de riesgo objetivo, con modulacion automatica limitada a +/-20% por distancia del stop.
 - El modo development recorre el mismo pipeline que produccion; la unica diferencia es la fuente de datos (CSVs en `data_development`) y que se usa `FakeBroker` para no enviar ordenes reales. (ref: config.py:ENVIRONMENTS, bot_trading/main.py:_build_broker, bot_trading/infrastructure/data_fetcher.py:DevelopmentCsvDataProvider)
 
 ## 2) Quickstart (instalacion, variables de entorno, comandos de ejecucion)
@@ -265,7 +266,7 @@
 - **Conexion MT5 fallida**: `MetaTrader5Client.connect()` lanza `MT5ConnectionError` si `mt5.initialize()` falla. (ref: bot_trading/infrastructure/mt5_client.py:MetaTrader5Client.connect)
 - **Timeframe invalido**: `MetaTrader5Client.get_ohlcv()` lanza `ValueError` si el timeframe no esta en `TIMEFRAME_MAP`. (ref: bot_trading/infrastructure/mt5_client.py:MetaTrader5Client.get_ohlcv)
 - **Datos CSV agotados**: `DevelopmentCsvDataProvider.get_data()` lanza `StopIteration` cuando no hay mas barras. (ref: bot_trading/infrastructure/data_fetcher.py:DevelopmentCsvDataProvider.get_data)
- - **Sin senales en estrategia**: `PivotZoneTestStrategy` retorna lista vacia si no puede calcular size (requiere equity y `broker_client._get_symbol_info`). `FakeBroker` ya expone estos campos en development; si se usa otro broker simulado hay que exponer `trade_tick_value/trade_tick_size` y volumenes minimos. (ref: bot_trading/application/strategies/pivot_zone_test_strategy.py:_calc_lot_size_by_stop, bot_trading/main.py:FakeBroker._get_symbol_info)
+ - **Sin senales en estrategia**: `PivotZoneTestStrategy` retorna lista vacia si no puede calcular size o si el riesgo no alcanza `volume_min`. El sizing usa `trade_tick_value/trade_tick_size`, limites de volumen y el snapshot compartido `shared/instrument_specs.json` como fallback en development/parity. (ref: bot_trading/application/strategies/pivot_zone_test_strategy.py:_calc_lot_size_by_stop, bot_trading/main.py:FakeBroker._get_symbol_info)
 - **Ordenes bloqueadas por margen**: `RiskManager.check_margin_limits()` retorna False si el margen supera limites o no hay margen libre. (ref: bot_trading/application/risk_management.py:RiskManager.check_margin_limits)
 
 ## 10) Seguridad
@@ -398,6 +399,23 @@
     - bot_trading/domain/entities.py
     - bot_trading/main.py
     - tests/test_entities.py
+
+- Fecha: 2026-03-11
+  - Cambios:
+    - `PivotZoneTestStrategy` deja de dimensionar por nocional/precio y pasa a usar `size_pct` como riesgo base al SL (`0.1 = 1%` de la cuenta).
+    - La modulacion por distancia del stop queda acotada a una banda fija de +/-20% sobre el riesgo base.
+    - Se elimina el bloqueo por `cap nocional < volumen minimo`; ahora la entrada solo se descarta cuando el riesgo disponible no alcanza `volume_min` o cuando el margen/snapshot del simbolo no permite abrir el lote.
+    - `FakeBroker` y la estrategia comparten fallback de especificaciones por simbolo desde `shared/instrument_specs.json` para mantener paridad offline.
+    - Se actualizan tests de sizing para cubrir EURUSD, USDJPY, banda de modulacion y rechazo por `volume_min`.
+  - Archivos:
+    - bot_trading/application/strategies/pivot_zone_test_strategy.py
+    - bot_trading/main.py
+    - tests/test_pivot_zone_test_strategy.py
+    - README.md
+    - ../shared/instrument_specs.json
+  - Impacto esperado:
+    - Tamaños coherentes entre live/backtest/parity sin depender del precio nominal del activo.
+    - Desbloqueo de setups válidos en USDJPY cuando el riesgo permitido alcanza el volumen mínimo operativo.
 
 - Fecha: 2026-02-06
   - Cambios:

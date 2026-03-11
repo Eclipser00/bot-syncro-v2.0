@@ -146,7 +146,8 @@ class StrategyConfig:
     n1: multiplicador de separacion minima entre zonas guardadas.
     n2: multiplicador (%) aplicado al ATR(14) para definir ancho de zona.
     n3: cantidad de pivotes necesarios para bloquear/validar una zona.
-    size_pct: porcentaje del balance para calcular el lote (0.05 = 5%).
+    size_pct: riesgo base por operacion al saltar el SL; 0.1 = 1% de la cuenta,
+        con modulacion automatica limitada a +/-20% segun la distancia del stop.
     timeframes: lista de timeframes que el motor debe descargar.
     """
 
@@ -158,7 +159,7 @@ class StrategyConfig:
     n1: int  # separacion minima entre zonas (min_distance = zone_width * n1)
     n2: int  # multiplicador (%) sobre ATR(14) para ancho de zona (100 = 1x ATR)
     n3: int  # pivotes minimos para bloquear/validar una zona
-    size_pct: float  # porcentaje del balance para dimensionar la posicion
+    size_pct: float  # riesgo base por operacion al SL (0.1 = 1% de la cuenta)
     timeframes: List[str] = field(default_factory=list)  # timeframes que debe descargar el motor
 
 
@@ -239,7 +240,7 @@ DEFAULT_SYMBOLS: List[SymbolConfigEntry] = [
         n1=3,  # separacion minima entre zonas = 3 anchos de zona
         n2=100,  # ancho de zona = ATR(14) * (100/100) = 1.0x ATR
         n3=5,  # pivotes minimos para bloquear/validar una zona pivote
-        size_pct=0.1,  # tamano por operacion (fraccion del capital)
+        size_pct=0.1,  # riesgo base por operacion al SL (0.1 = 1% de la cuenta)
     ),
     SymbolConfigEntry(
         name="GBPUSD",  # simbolo/instrumento a operar
@@ -247,7 +248,7 @@ DEFAULT_SYMBOLS: List[SymbolConfigEntry] = [
         n1=3,  # separacion minima entre zonas = 3 anchos de zona
         n2=100,  # ancho de zona = ATR(14) * (100/100) = 1.0x ATR
         n3=5,  # pivotes minimos para bloquear/validar una zona pivote
-        size_pct=0.1,  # tamano por operacion (fraccion del capital)
+        size_pct=0.1,  # riesgo base por operacion al SL (0.1 = 1% de la cuenta)
     ),
     SymbolConfigEntry(
         name="USDJPY",  # simbolo/instrumento a operar
@@ -255,7 +256,7 @@ DEFAULT_SYMBOLS: List[SymbolConfigEntry] = [
         n1=3,  # separacion minima entre zonas = 3 anchos de zona
         n2=100,  # ancho de zona = ATR(14) * (100/100) = 1.0x ATR
         n3=5,  # pivotes minimos para bloquear/validar una zona pivote
-        size_pct=0.1,  # tamano por operacion (fraccion del capital)
+        size_pct=0.1,  # riesgo base por operacion al SL (0.1 = 1% de la cuenta)
     ),
 ]
 

@@ -42,10 +42,11 @@ class FakeBrokerClient:
         )
         self.symbol_info = SimpleNamespace(
             trade_tick_value=1.0,
-            trade_tick_size=0.0001,
+            trade_tick_size=0.1,
             volume_min=0.01,
             volume_step=0.01,
             volume_max=10.0,
+            margin_per_lot=1000.0,
         )
 
     def get_open_positions(self):
@@ -124,6 +125,14 @@ class MetaTrader5Client(FakeBrokerClient):
 
 def build_breakout_context(symbol_params=None):
     broker = FakeBrokerClient()
+    broker.symbol_info = SimpleNamespace(
+        trade_tick_value=1.0,
+        trade_tick_size=0.1,
+        volume_min=0.01,
+        volume_step=0.01,
+        volume_max=10.0,
+        margin_per_lot=1000.0,
+    )
     strategy = PivotZoneTestStrategy(
         name="PivotZoneTest",
         broker_client=broker,
@@ -439,20 +448,20 @@ def test_symbol_size_override_changes_lot_size():
     override_signals = override_strategy.generate_signals(override_data)
     assert override_signals, "La estrategia con override debe generar señal"
 
-    assert base_size == pytest.approx(0.01, rel=1e-3)
-    assert override_signals[0].size == pytest.approx(0.03, rel=1e-3)
+    assert base_size == pytest.approx(1.53, rel=1e-3)
+    assert override_signals[0].size == pytest.approx(3.07, rel=1e-3)
     assert override_signals[0].size > base_size
 
 
-def test_lot_size_applies_notional_cap_by_size_pct():
+def test_lot_size_uses_stop_risk_without_cap_nocional():
     broker = FakeBrokerClient(equity=100_000.0)
     broker.symbol_info = SimpleNamespace(
-        trade_tick_value=1.0,
+        trade_tick_value=10.0,
         trade_tick_size=0.0001,
-        trade_contract_size=100_000.0,
         volume_min=0.01,
         volume_step=0.01,
         volume_max=100.0,
+        margin_per_lot=20_000.0,
     )
     strategy = PivotZoneTestStrategy(
         name="PivotZoneTest",
@@ -470,7 +479,94 @@ def test_lot_size_applies_notional_cap_by_size_pct():
         size_pct=0.05,
     )
 
-    assert lots == pytest.approx(0.03, rel=1e-3)
+    assert lots == pytest.approx(4.72, rel=1e-3)
+
+
+def test_lot_size_modulation_is_clamped_to_band():
+    broker = FakeBrokerClient(equity=100_000.0)
+    broker.symbol_info = SimpleNamespace(
+        trade_tick_value=1.0,
+        trade_tick_size=0.1,
+        volume_min=0.01,
+        volume_step=0.01,
+        volume_max=1000.0,
+        margin_per_lot=1.0,
+    )
+    strategy = PivotZoneTestStrategy(
+        name="PivotZoneTest",
+        broker_client=broker,
+        tf_entry="M1",
+        tf_zone="M5",
+        tf_stop="M5",
+        size_pct=0.1,
+    )
+
+    lots_ref = strategy._calc_lot_size_by_stop("EURUSD", entry_price=100.0, stop_price=99.0, size_pct=0.1)
+    lots_narrow = strategy._calc_lot_size_by_stop("EURUSD", entry_price=100.0, stop_price=99.75, size_pct=0.1)
+    lots_wide = strategy._calc_lot_size_by_stop("EURUSD", entry_price=100.0, stop_price=98.0, size_pct=0.1)
+
+    assert lots_ref == pytest.approx(100.0, rel=1e-3)
+    assert lots_narrow == pytest.approx(480.0, rel=1e-3)
+    assert lots_wide == pytest.approx(40.0, rel=1e-3)
+
+
+def test_usdjpy_no_se_bloquea_por_nocional():
+    broker = FakeBrokerClient(equity=99_944.0)
+    broker.symbol_info = SimpleNamespace(
+        trade_tick_value=6.5,
+        trade_tick_size=0.01,
+        volume_min=0.01,
+        volume_step=0.01,
+        volume_max=100.0,
+        margin_per_lot=20_000.0,
+    )
+    strategy = PivotZoneTestStrategy(
+        name="PivotZoneTest",
+        broker_client=broker,
+        tf_entry="M1",
+        tf_zone="M5",
+        tf_stop="M5",
+        size_pct=0.1,
+    )
+
+    lots = strategy._calc_lot_size_by_stop(
+        symbol="USDJPY",
+        entry_price=158.216,
+        stop_price=158.016,
+        size_pct=0.1,
+    )
+
+    assert lots is not None
+    assert float(lots) >= 0.01
+
+
+def test_lot_size_descarta_si_riesgo_no_alcanza_volumen_minimo():
+    broker = FakeBrokerClient(equity=1_000.0)
+    broker.symbol_info = SimpleNamespace(
+        trade_tick_value=10.0,
+        trade_tick_size=0.01,
+        volume_min=0.01,
+        volume_step=0.01,
+        volume_max=100.0,
+        margin_per_lot=20_000.0,
+    )
+    strategy = PivotZoneTestStrategy(
+        name="PivotZoneTest",
+        broker_client=broker,
+        tf_entry="M1",
+        tf_zone="M5",
+        tf_stop="M5",
+        size_pct=0.05,
+    )
+
+    lots = strategy._calc_lot_size_by_stop(
+        symbol="USDJPY",
+        entry_price=158.0,
+        stop_price=157.0,
+        size_pct=0.05,
+    )
+
+    assert lots is None
 
 
 def test_mt5_real_mode_no_crea_brackets_opuestos_y_limpia_pendientes():

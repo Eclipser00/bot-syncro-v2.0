@@ -4,6 +4,8 @@
 - Configuracion canonical: `Entry=3 minutos`, `Zone=9 minutos`, `Stop=3 minutos`.
 - `backtest.py` aplica auto-resample dinamico para `TF_zone` usando `config.PIVOT_TF_ZONE_MINUTES` (actualmente `9`).
 - `parity_runner.py` ya no asume `M1->M3`; detecta timeframe base del CSV y genera `TF_zone` por `zone_compression`.
+- `size_pct` en `PivotZoneTest` ya no significa nocional: ahora representa riesgo base al SL (`0.1 = 1%` de la cuenta), con modulacion automatica limitada a +/-20%.
+- La economia offline por simbolo para sizing/parity se toma del snapshot compartido `shared/instrument_specs.json`.
 
 ## Disclaimer
 
@@ -118,6 +120,20 @@ Notas importantes:
 - Si hay fallos parciales, el script sigue con los demas simbolos y muestra resumen.
 
 ## Changelog de logica
+
+- Fecha: 2026-03-11
+  - Cambios:
+    - `PivotZoneTest` deja de usar sizing por nocional y pasa a dimensionar por riesgo al stop usando `size_pct` como riesgo base (`0.1 = 1%`).
+    - La modulacion por distancia del stop queda limitada a una banda fija de +/-20% sobre el riesgo base.
+    - El sizing offline carga `tick_size`, `tick_value`, limites de volumen y margen por simbolo desde `shared/instrument_specs.json` para alinearse con live/parity.
+    - `parity tool/backtest_runner_adapter.py` deja de forzar un `size_pct` fijo y toma el configurado en el bot live para cada simbolo.
+  - Archivos:
+    - strategies.py
+    - ../parity tool/backtest_runner_adapter.py
+    - README.md
+    - ../shared/instrument_specs.json
+  - Impacto esperado:
+    - Paridad mas estable entre backtest y last trading en instrumentos con precios nominales muy distintos, especialmente `USDJPY`.
 
 - Fecha: 2026-03-07
   - Cambios:

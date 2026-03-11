@@ -17,8 +17,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 import os
+import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
+from types import SimpleNamespace
 
 import math
 import statistics
@@ -43,6 +45,12 @@ pivot_logger = logging.getLogger("pivot_zones")
 
 _TF_ORDER = ["M1", "M3", "M5", "M9", "M15", "M30", "H1", "H4", "D1"]
 _EVENT_LOGGER = EventLogger(str(Path(__file__).resolve().parents[4] / "outputs" / "bot_events.jsonl"))
+_INSTRUMENT_SPECS_PATH = Path(__file__).resolve().parents[4] / "shared" / "instrument_specs.json"
+_RISK_FRACTION_SCALE = 0.1
+_RISK_BAND_MIN = 0.8
+_RISK_BAND_MAX = 1.2
+_STOP_REFERENCE_PCT = 0.01
+_INSTRUMENT_SPECS_CACHE: Optional[Dict[str, Dict[str, float]]] = None
 
 
 def _magic_number_from_strategy_name(strategy_name: str) -> int:
@@ -84,6 +92,49 @@ def _format_ts(ts: Any) -> str:
     except Exception:
         pass
     return str(ts)
+
+
+def _load_instrument_specs() -> Dict[str, Dict[str, float]]:
+    global _INSTRUMENT_SPECS_CACHE
+    if _INSTRUMENT_SPECS_CACHE is not None:
+        return _INSTRUMENT_SPECS_CACHE
+    try:
+        raw = json.loads(_INSTRUMENT_SPECS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        _INSTRUMENT_SPECS_CACHE = {}
+        return _INSTRUMENT_SPECS_CACHE
+
+    specs: Dict[str, Dict[str, float]] = {}
+    for symbol, values in raw.items():
+        if not isinstance(values, dict):
+            continue
+        clean_values: Dict[str, float] = {}
+        for key, value in values.items():
+            casted = _safe_float(value)
+            if casted is not None:
+                clean_values[key] = casted
+        specs[str(symbol).upper()] = clean_values
+    _INSTRUMENT_SPECS_CACHE = specs
+    return specs
+
+
+def _snapshot_instrument_spec(symbol: str) -> Dict[str, float]:
+    return dict(_load_instrument_specs().get(str(symbol).upper(), {}))
+
+
+def _size_pct_to_risk_fraction(size_pct: float) -> float:
+    return max(0.0, float(size_pct) * _RISK_FRACTION_SCALE)
+
+
+def _stop_modulation(entry_price: float, stop_price: float) -> float:
+    entry = abs(float(entry_price))
+    if entry <= 0:
+        return 1.0
+    dist_pct = abs(float(entry_price) - float(stop_price)) / entry
+    if dist_pct <= 0:
+        return 1.0
+    factor = math.sqrt(_STOP_REFERENCE_PCT / dist_pct)
+    return float(max(_RISK_BAND_MIN, min(_RISK_BAND_MAX, factor)))
 
 
 @dataclass
@@ -307,17 +358,50 @@ class PivotZoneTestStrategy:
             return None
 
     def _get_symbol_info(self, symbol: str):
-        """Obtiene info de símbolo de MT5 (si el broker_client lo soporta)."""
-        if self.broker_client is None:
-            return None
-        # MetaTrader5Client lo expone como método "privado" pero disponible.
-        if hasattr(self.broker_client, "_get_symbol_info"):
+        """Obtiene info de símbolo del broker y la completa con el snapshot compartido."""
+        snapshot = _snapshot_instrument_spec(symbol)
+        info = None
+        if self.broker_client is not None and hasattr(self.broker_client, "_get_symbol_info"):
             try:
-                return self.broker_client._get_symbol_info(symbol)  # type: ignore[attr-defined]
+                info = self.broker_client._get_symbol_info(symbol)  # type: ignore[attr-defined]
             except Exception as e:
                 logger.debug("[%s] No se pudo obtener symbol_info para %s: %s", self.name, symbol, e)
-                return None
-        return None
+
+        if info is None and not snapshot:
+            return None
+
+        merged: Dict[str, float] = {}
+        for field_name in (
+            "trade_tick_value_loss",
+            "trade_tick_value_profit",
+            "trade_tick_value",
+            "trade_tick_size",
+            "trade_contract_size",
+            "volume_min",
+            "volume_step",
+            "volume_max",
+            "margin_initial",
+            "margin_per_lot",
+        ):
+            if info is not None:
+                value = _safe_float(getattr(info, field_name, None))
+                if value is not None:
+                    merged[field_name] = value
+        for field_name, value in snapshot.items():
+            merged.setdefault(field_name, value)
+        return SimpleNamespace(**merged)
+
+    def _get_margin_free(self) -> Optional[float]:
+        if self.broker_client is None:
+            return None
+        try:
+            info = self.broker_client.get_account_info()
+        except Exception:
+            return None
+        margin_free = _safe_float(getattr(info, "margin_free", None))
+        if margin_free is not None and margin_free > 0:
+            return margin_free
+        return _safe_float(getattr(info, "equity", None))
 
     # -----------------------------
     # Helpers de TF y datos
@@ -807,14 +891,7 @@ class PivotZoneTestStrategy:
     def _calc_lot_size_by_stop(
         self, symbol: str, entry_price: float, stop_price: float, size_pct: float
     ) -> Optional[float]:
-        """Calcula tamaño en lotes con `size_pct` como nocional objetivo.
-
-        Política:
-        - Base: nocional objetivo ~= equity * size_pct.
-        - Modulación por stop: el lote se ajusta con un factor suave en función de
-          la distancia relativa al stop (más estrecho -> más tamaño; más ancho -> menos).
-        - Cap nocional superior: evita exposiciones desproporcionadas.
-        """
+        """Calcula tamaño en lotes con `size_pct` como riesgo sobre la cuenta al SL."""
         equity = self._get_equity()
         if equity is None or equity <= 0:
             logger.debug("[%s] Size descartado: equity no disponible o <=0 (equity=%s)", self.name, equity)
@@ -825,58 +902,24 @@ class PivotZoneTestStrategy:
             logger.debug("[%s] Size descartado: distancia stop=0 (entry=%.5f stop=%.5f)", self.name, entry_price, stop_price)
             return None
 
-        if os.getenv("PARITY_SIZING", "0") == "1":
-            # Paridad: misma semántica que el backtest (size en unidades nocionales).
-            try:
-                leverage = float(os.getenv("PARITY_LEVERAGE", "1"))
-            except Exception:
-                leverage = 1.0
-            leverage = max(1.0, leverage)
-            try:
-                stop_ref_pct = float(os.getenv("SIZE_STOP_REFERENCE_PCT", "0.00075"))
-            except Exception:
-                stop_ref_pct = 0.00075
-            try:
-                factor_min = float(os.getenv("SIZE_STOP_FACTOR_MIN", "0.80"))
-                factor_max = float(os.getenv("SIZE_STOP_FACTOR_MAX", "1.20"))
-            except Exception:
-                factor_min, factor_max = 0.80, 1.20
-            f_lo = min(factor_min, factor_max)
-            f_hi = max(factor_min, factor_max)
-
-            target_notional = float(equity) * float(size_pct) * leverage
-            base_size = target_notional / float(entry_price)
-            dist_pct = dist / float(entry_price)
-            stop_factor = 1.0
-            if stop_ref_pct > 0 and dist_pct > 0:
-                stop_factor = math.sqrt(stop_ref_pct / dist_pct)
-                stop_factor = max(f_lo, min(stop_factor, f_hi))
-            raw_size = base_size * stop_factor
-
-            # Cap nocional por defecto más holgado para evitar bloqueos por vol_min
-            # en los símbolos actuales (EURUSD/GBPUSD/USDJPY) con size_pct bajo.
-            default_cap_pct = min(1.0, max(float(size_pct), float(size_pct) * 2.0))
-            try:
-                pct_cap = float(os.getenv("PARITY_PCT_CAP", str(default_cap_pct)))
-            except Exception:
-                pct_cap = default_cap_pct
-
-            max_size_by_cap = (float(equity) * float(pct_cap) * leverage) / float(entry_price) if entry_price else 0.0
-            if max_size_by_cap > 0:
-                raw_size = min(raw_size, max_size_by_cap)
-            return max(0.0, float(raw_size))
-
         info = self._get_symbol_info(symbol)
         if info is None:
             logger.debug("[%s] Size descartado: symbol_info no disponible para %s", self.name, symbol)
             return None
 
-        tick_value = _safe_float(getattr(info, "trade_tick_value", None))
+        tick_value = (
+            _safe_float(getattr(info, "trade_tick_value_loss", None))
+            or _safe_float(getattr(info, "trade_tick_value_profit", None))
+            or _safe_float(getattr(info, "trade_tick_value", None))
+        )
         tick_size = _safe_float(getattr(info, "trade_tick_size", None))
-        contract_size = _safe_float(getattr(info, "trade_contract_size", None))
         vol_min = _safe_float(getattr(info, "volume_min", None))
         vol_step = _safe_float(getattr(info, "volume_step", None))
         vol_max = _safe_float(getattr(info, "volume_max", None))
+        margin_per_lot = (
+            _safe_float(getattr(info, "margin_per_lot", None))
+            or _safe_float(getattr(info, "margin_initial", None))
+        )
 
         if tick_value is None or tick_size is None or tick_value <= 0 or tick_size <= 0:
             logger.debug(
@@ -897,91 +940,60 @@ class PivotZoneTestStrategy:
         if vol_max is None or vol_max <= 0:
             vol_max = 100.0
 
-        # Fallback clásico por riesgo al stop si no hay contract_size.
-        value_per_price_unit = tick_value / tick_size  # dinero por 1.0 de precio por lote
-        risk_amount = float(equity) * float(size_pct)
-        raw_lots_by_stop = risk_amount / (dist * value_per_price_unit)
+        risk_fraction_base = _size_pct_to_risk_fraction(float(size_pct))
+        if risk_fraction_base <= 0:
+            logger.debug("[%s] Size descartado: size_pct<=0 (size_pct=%s)", self.name, size_pct)
+            return None
 
-        raw_lots = raw_lots_by_stop
-        capital_cap_lots: Optional[float] = None
-        cap_pct_used: Optional[float] = None
-        cap_formula: str = "n/a"
-        if contract_size is not None and contract_size > 0 and entry_price > 0:
-            try:
-                stop_ref_pct = float(os.getenv("SIZE_STOP_REFERENCE_PCT", "0.00075"))
-            except Exception:
-                stop_ref_pct = 0.00075
-            try:
-                factor_min = float(os.getenv("SIZE_STOP_FACTOR_MIN", "0.80"))
-                factor_max = float(os.getenv("SIZE_STOP_FACTOR_MAX", "1.20"))
-            except Exception:
-                factor_min, factor_max = 0.80, 1.20
-            f_lo = min(factor_min, factor_max)
-            f_hi = max(factor_min, factor_max)
+        modulation = _stop_modulation(entry_price, stop_price)
+        effective_risk_fraction = risk_fraction_base * modulation
+        risk_budget = float(equity) * effective_risk_fraction
+        ticks_to_stop = dist / tick_size
+        if ticks_to_stop <= 0:
+            logger.debug("[%s] Size descartado: ticks_to_stop<=0 (ticks=%s)", self.name, ticks_to_stop)
+            return None
 
-            target_notional = float(equity) * float(size_pct)
-            base_lots = target_notional / (contract_size * float(entry_price))
-            dist_pct = dist / float(entry_price)
-            stop_factor = 1.0
-            if stop_ref_pct > 0 and dist_pct > 0:
-                stop_factor = math.sqrt(stop_ref_pct / dist_pct)
-                stop_factor = max(f_lo, min(stop_factor, f_hi))
-            raw_lots = base_lots * stop_factor
+        loss_per_lot = ticks_to_stop * tick_value
+        if loss_per_lot <= 0:
+            logger.debug("[%s] Size descartado: loss_per_lot<=0 (loss_per_lot=%s)", self.name, loss_per_lot)
+            return None
 
-            default_cap_pct = min(1.0, max(float(size_pct), float(size_pct) * 2.0))
-            cap_pct = default_cap_pct
-            cap_pct_env = os.getenv("SIZE_NOTIONAL_CAP_PCT")
-            if cap_pct_env:
-                try:
-                    cap_pct = float(cap_pct_env)
-                except Exception:
-                    cap_pct = default_cap_pct
-            if os.getenv("PARITY_SIZING", "0") == "1":
-                try:
-                    cap_pct = float(os.getenv("PARITY_PCT_CAP", str(cap_pct)))
-                except Exception:
-                    pass
-            cap_pct_used = float(cap_pct)
-            if cap_pct > 0:
-                capital_cap_lots = (float(equity) * float(cap_pct)) / (contract_size * float(entry_price))
-                cap_formula = "price_notional"
-                raw_lots = min(raw_lots, capital_cap_lots)
+        raw_lots = risk_budget / loss_per_lot
+        margin_cap_lots: Optional[float] = None
+        margin_free = self._get_margin_free()
+        if margin_per_lot is not None and margin_per_lot > 0 and margin_free is not None and margin_free > 0:
+            margin_cap_lots = margin_free / margin_per_lot
 
-        # Encajar a step y límites
-        if capital_cap_lots is not None and capital_cap_lots < vol_min:
+        capped_lots = min(raw_lots, float(vol_max))
+        if margin_cap_lots is not None:
+            capped_lots = min(capped_lots, float(margin_cap_lots))
+
+        adjusted_lots = math.floor((capped_lots + 1e-12) / vol_step) * vol_step
+        adjusted_lots = float(round(adjusted_lots, 8))
+
+        if adjusted_lots < vol_min:
             logger.error(
-                "[%s] Size bloqueado: cap nocional < volumen minimo | symbol=%s cap=%.6f vol_min=%.6f "
-                "equity=%.2f size_pct=%.4f cap_pct=%.4f contract_size=%.6f entry=%.5f formula=%s",
+                "[%s] Size bloqueado: riesgo insuficiente para volumen minimo | "
+                "symbol=%s risk_budget=%.6f size_pct=%.4f risk_fraction=%.6f modulation=%.4f "
+                "ticks_stop=%.4f loss_per_lot=%.6f raw_lots=%.6f adj_lots=%.6f "
+                "vol_min=%.6f vol_step=%.6f margin_cap=%.6f",
                 self.name,
                 symbol,
-                capital_cap_lots,
-                vol_min,
-                float(equity),
+                float(risk_budget),
                 float(size_pct),
-                float(cap_pct_used) if cap_pct_used is not None else -1.0,
-                float(contract_size) if contract_size is not None else -1.0,
-                float(entry_price),
-                cap_formula,
+                float(effective_risk_fraction),
+                float(modulation),
+                float(ticks_to_stop),
+                float(loss_per_lot),
+                float(raw_lots),
+                float(adjusted_lots),
+                float(vol_min),
+                float(vol_step),
+                float(margin_cap_lots) if margin_cap_lots is not None else -1.0,
             )
             return None
 
-        lots = max(vol_min, min(raw_lots, vol_max))
-        lots = math.floor(lots / vol_step) * vol_step
-        lots = max(vol_min, lots)
-
-        # Redondeo estable
-        lots = float(round(lots, 8))
-        if lots <= 0:
-            logger.debug(
-                "[%s] Size descartado: lotes <=0 tras ajuste (raw=%.6f adj=%.6f vol_min=%.6f vol_step=%.6f)",
-                self.name,
-                raw_lots,
-                lots,
-                vol_min,
-                vol_step,
-            )
-            return None
-        return lots
+        return adjusted_lots
 
     def _update_trailing_stop(self, symbol: str, state: _TradeState) -> None:
         """Actualiza el stop activo según nuevos pivotes confirmados en TF_stop."""
