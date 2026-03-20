@@ -7,6 +7,12 @@
 - `size_pct` en `PivotZoneTest` ya no significa nocional: ahora representa riesgo base al SL (`0.1 = 1%` de la cuenta), con modulacion automatica limitada a +/-20%.
 - La economia offline por simbolo para sizing/parity se toma del snapshot compartido `shared/instrument_specs.json`.
 
+## TP adaptativo (actualizado 2026-03-20)
+- `PivotZoneTest` conserva sin cambios la entrada, la deteccion de ruptura, el stop inicial, el sizing y la seleccion inicial de zona objetivo al abrir el trade.
+- Defaults nuevos de estrategia: `adaptive_tp=True` y `adaptive_tp_min_improvement_pct=0.25`.
+- Mientras la posicion siga abierta, una zona pivote nueva validada puede reanclar el TP a una zona intermedia mas cercana solo si mejora al menos un 25% la distancia desde la entrada real al TP activo.
+- El stop no se toca, el TP nunca se aleja y la evaluacion se hace una sola vez por zona nueva, en el mismo punto donde esa zona queda guardada.
+
 ## Disclaimer
 
 **Todo el código de este proyecto ha sido desarrollado utilizando vibe coding (codificación asistida por IA).**

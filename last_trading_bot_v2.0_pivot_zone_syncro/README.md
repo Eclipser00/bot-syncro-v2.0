@@ -8,6 +8,12 @@
   - `data.csv_base_timeframe`: `M3`.
 - El resample de `M9` se construye desde el feed base `M3` y descarta la ultima vela parcial en streaming.
 
+## TP adaptativo (actualizado 2026-03-20)
+- `PivotZoneTestStrategy` mantiene intactas la entrada, la ruptura, el stop inicial, el sizing y la seleccion inicial de zona objetivo.
+- Defaults nuevos en estrategia: `adaptive_tp=True` y `adaptive_tp_min_improvement_pct=0.25`.
+- Si aparece una zona pivote nueva validada en la direccion del trade y su borde mas cercano queda entre la entrada real y el TP activo, el TP puede reanclarse a esa zona solo si mejora al menos un 25% la distancia al objetivo.
+- El stop no se toca, el TP solo puede acercarse y el intento de reanclaje ocurre una unica vez, justo cuando la zona nueva queda guardada.
+
 ## 1) Resumen ejecutivo del proyecto
 - Este repo implementa un bot de trading orientado a objetos que coordina descarga de datos OHLCV, evaluacion de riesgo, generacion de senales y ejecucion de ordenes mediante un broker. (ref: bot_trading/application/engine/bot_engine.py:TradingBot, bot_trading/infrastructure/data_fetcher.py:MarketDataService, bot_trading/application/engine/signals.py:Signal, bot_trading/application/engine/order_executor.py:OrderExecutor)
 - El entrypoint principal es `bot_trading/main.py:main()`, se ejecuta como modulo Python y lee toda la configuracion desde `config.py`. (ref: bot_trading/main.py:main, config.py)

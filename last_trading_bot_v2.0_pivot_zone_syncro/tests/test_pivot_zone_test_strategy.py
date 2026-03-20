@@ -351,6 +351,235 @@ def test_bracket_created_without_trailing_updates_stop_on_long():
     assert state.pending_stop_price is None
 
 
+def test_adaptive_tp_reanchors_long_to_intermediate_zone():
+    broker = FakeBrokerClient()
+    strategy = PivotZoneTestStrategy(
+        name="PivotZoneTest",
+        broker_client=broker,
+        tf_entry="M1",
+        tf_zone="M5",
+        tf_stop="M5",
+    )
+    symbol = "EURUSD"
+    strategy._ensure_symbol_state(symbol)
+    magic = strategy._get_magic_number()
+
+    position = Position(
+        symbol=symbol,
+        volume=0.2,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=120.0,
+        strategy_name=strategy.name,
+        open_time=pd.Timestamp("2024-01-01"),
+        magic_number=magic,
+    )
+    broker.positions.append(position)
+    broker.pending_orders.extend(
+        [
+            SimpleNamespace(order_id=10, symbol=symbol, order_type="SELL_LIMIT", volume=0.2, price=120.0, magic_number=magic),
+            SimpleNamespace(order_id=11, symbol=symbol, order_type="SELL_STOP", volume=0.2, price=95.0, magic_number=magic),
+        ]
+    )
+
+    state = strategy._trade_state[symbol]
+    state.in_position = True
+    state.direction = 1
+    state.entry_fill_price = None
+    state.active_stop = 95.0
+    state.active_tp = 120.0
+    state.tp_order_id = 10
+    state.sl_order_id = 11
+    state.broken_zone = {"top": 102.0, "bot": 100.0}
+    state.target_zone = {"top": 120.0, "bot": 118.0}
+
+    entry_df = make_df([104.0, 105.0], symbol=symbol)
+    new_zone = {"top": 110.0, "bot": 108.0, "bar": 20}
+
+    strategy._maybe_reanchor_tp_on_new_zone(symbol, new_zone, entry_df)
+
+    tp_orders = [o for o in broker.pending_orders if o.order_type == "SELL_LIMIT"]
+    sl_orders = [o for o in broker.pending_orders if o.order_type == "SELL_STOP"]
+
+    assert len(tp_orders) == 1
+    assert len(sl_orders) == 1
+    assert tp_orders[0].price == pytest.approx(108.0)
+    assert sl_orders[0].price == pytest.approx(95.0)
+    assert state.entry_fill_price == pytest.approx(100.0)
+    assert state.active_tp == pytest.approx(108.0)
+    assert state.target_zone == new_zone
+    assert position.take_profit == pytest.approx(108.0)
+
+
+def test_adaptive_tp_reanchors_short_to_intermediate_zone():
+    broker = FakeBrokerClient()
+    strategy = PivotZoneTestStrategy(
+        name="PivotZoneTest",
+        broker_client=broker,
+        tf_entry="M1",
+        tf_zone="M5",
+        tf_stop="M5",
+    )
+    symbol = "EURUSD"
+    strategy._ensure_symbol_state(symbol)
+    magic = strategy._get_magic_number()
+
+    position = Position(
+        symbol=symbol,
+        volume=0.2,
+        entry_price=100.0,
+        stop_loss=105.0,
+        take_profit=80.0,
+        strategy_name=strategy.name,
+        open_time=pd.Timestamp("2024-01-01"),
+        magic_number=magic,
+    )
+    broker.positions.append(position)
+    broker.pending_orders.extend(
+        [
+            SimpleNamespace(order_id=10, symbol=symbol, order_type="BUY_LIMIT", volume=0.2, price=80.0, magic_number=magic),
+            SimpleNamespace(order_id=11, symbol=symbol, order_type="BUY_STOP", volume=0.2, price=105.0, magic_number=magic),
+        ]
+    )
+
+    state = strategy._trade_state[symbol]
+    state.in_position = True
+    state.direction = -1
+    state.entry_fill_price = None
+    state.active_stop = 105.0
+    state.active_tp = 80.0
+    state.tp_order_id = 10
+    state.sl_order_id = 11
+    state.broken_zone = {"top": 100.0, "bot": 98.0}
+    state.target_zone = {"top": 82.0, "bot": 80.0}
+
+    entry_df = make_df([96.0, 95.0], symbol=symbol)
+    new_zone = {"top": 92.0, "bot": 90.0, "bar": 20}
+
+    strategy._maybe_reanchor_tp_on_new_zone(symbol, new_zone, entry_df)
+
+    tp_orders = [o for o in broker.pending_orders if o.order_type == "BUY_LIMIT"]
+    sl_orders = [o for o in broker.pending_orders if o.order_type == "BUY_STOP"]
+
+    assert len(tp_orders) == 1
+    assert len(sl_orders) == 1
+    assert tp_orders[0].price == pytest.approx(92.0)
+    assert sl_orders[0].price == pytest.approx(105.0)
+    assert state.entry_fill_price == pytest.approx(100.0)
+    assert state.active_tp == pytest.approx(92.0)
+    assert state.target_zone == new_zone
+    assert position.take_profit == pytest.approx(92.0)
+
+
+def test_adaptive_tp_ignores_insufficient_improvement():
+    broker = FakeBrokerClient()
+    strategy = PivotZoneTestStrategy(
+        name="PivotZoneTest",
+        broker_client=broker,
+        tf_entry="M1",
+        tf_zone="M5",
+        tf_stop="M5",
+    )
+    symbol = "EURUSD"
+    strategy._ensure_symbol_state(symbol)
+    magic = strategy._get_magic_number()
+
+    position = Position(
+        symbol=symbol,
+        volume=0.2,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=120.0,
+        strategy_name=strategy.name,
+        open_time=pd.Timestamp("2024-01-01"),
+        magic_number=magic,
+    )
+    broker.positions.append(position)
+    broker.pending_orders.extend(
+        [
+            SimpleNamespace(order_id=10, symbol=symbol, order_type="SELL_LIMIT", volume=0.2, price=120.0, magic_number=magic),
+            SimpleNamespace(order_id=11, symbol=symbol, order_type="SELL_STOP", volume=0.2, price=95.0, magic_number=magic),
+        ]
+    )
+
+    state = strategy._trade_state[symbol]
+    state.in_position = True
+    state.direction = 1
+    state.entry_fill_price = 100.0
+    state.active_stop = 95.0
+    state.active_tp = 120.0
+    state.tp_order_id = 10
+    state.sl_order_id = 11
+    state.broken_zone = {"top": 102.0, "bot": 100.0}
+    state.target_zone = {"top": 120.0, "bot": 118.0}
+
+    entry_df = make_df([104.0, 105.0], symbol=symbol)
+    new_zone = {"top": 118.0, "bot": 116.0, "bar": 20}
+
+    strategy._maybe_reanchor_tp_on_new_zone(symbol, new_zone, entry_df)
+
+    tp_orders = [o for o in broker.pending_orders if o.order_type == "SELL_LIMIT"]
+    assert len(tp_orders) == 1
+    assert tp_orders[0].price == pytest.approx(120.0)
+    assert state.active_tp == pytest.approx(120.0)
+    assert state.target_zone == {"top": 120.0, "bot": 118.0}
+    assert position.take_profit == pytest.approx(120.0)
+
+
+def test_adaptive_tp_ignores_zone_already_passed_by_price():
+    broker = FakeBrokerClient()
+    strategy = PivotZoneTestStrategy(
+        name="PivotZoneTest",
+        broker_client=broker,
+        tf_entry="M1",
+        tf_zone="M5",
+        tf_stop="M5",
+    )
+    symbol = "EURUSD"
+    strategy._ensure_symbol_state(symbol)
+    magic = strategy._get_magic_number()
+
+    position = Position(
+        symbol=symbol,
+        volume=0.2,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=120.0,
+        strategy_name=strategy.name,
+        open_time=pd.Timestamp("2024-01-01"),
+        magic_number=magic,
+    )
+    broker.positions.append(position)
+    broker.pending_orders.extend(
+        [
+            SimpleNamespace(order_id=10, symbol=symbol, order_type="SELL_LIMIT", volume=0.2, price=120.0, magic_number=magic),
+            SimpleNamespace(order_id=11, symbol=symbol, order_type="SELL_STOP", volume=0.2, price=95.0, magic_number=magic),
+        ]
+    )
+
+    state = strategy._trade_state[symbol]
+    state.in_position = True
+    state.direction = 1
+    state.entry_fill_price = 100.0
+    state.active_stop = 95.0
+    state.active_tp = 120.0
+    state.tp_order_id = 10
+    state.sl_order_id = 11
+    state.broken_zone = {"top": 102.0, "bot": 100.0}
+    state.target_zone = {"top": 120.0, "bot": 118.0}
+
+    entry_df = make_df([108.5, 109.0], symbol=symbol)
+    new_zone = {"top": 110.0, "bot": 108.0, "bar": 20}
+
+    strategy._maybe_reanchor_tp_on_new_zone(symbol, new_zone, entry_df)
+
+    tp_orders = [o for o in broker.pending_orders if o.order_type == "SELL_LIMIT"]
+    assert len(tp_orders) == 1
+    assert tp_orders[0].price == pytest.approx(120.0)
+    assert state.active_tp == pytest.approx(120.0)
+    assert position.take_profit == pytest.approx(120.0)
+
+
 def test_breakout_long_descarta_si_no_hay_stop_confirmado_dentro_de_zona():
     strategy, _, data = build_breakout_context()
     symbol = "EURUSD"

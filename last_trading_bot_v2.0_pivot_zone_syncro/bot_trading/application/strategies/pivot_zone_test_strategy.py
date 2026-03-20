@@ -206,6 +206,7 @@ class _TradeState:
     in_position: bool = False
     direction: int = 0  # +1 long, -1 short
     entry_timeframe: Optional[str] = None
+    entry_fill_price: Optional[float] = None
 
     broken_zone: Optional[Dict[str, float]] = None
     target_zone: Optional[Dict[str, float]] = None
@@ -258,6 +259,8 @@ class PivotZoneTestStrategy:
     n2: int = 60
     n3: int = 3
     size_pct: float = 0.05
+    adaptive_tp: bool = True
+    adaptive_tp_min_improvement_pct: float = 0.25
 
     # Estado persistente por símbolo (no se borra)
     _saved_zones_by_symbol: Dict[str, List[Dict[str, float]]] = field(default_factory=dict, init=False)
@@ -459,7 +462,13 @@ class PivotZoneTestStrategy:
         if symbol not in self._stop_pivot_maxs:
             self._stop_pivot_maxs[symbol] = []
 
-    def _process_zone_tf(self, symbol: str, df_zone_closed: pd.DataFrame, params: _PivotParams) -> None:
+    def _process_zone_tf(
+        self,
+        symbol: str,
+        df_zone_closed: pd.DataFrame,
+        params: _PivotParams,
+        df_entry_closed: Optional[pd.DataFrame] = None,
+    ) -> None:
         """Actualiza PivotZone incremental y guarda zonas en transición valid 0->1."""
         self._ensure_symbol_state(symbol)
 
@@ -672,6 +681,7 @@ class PivotZoneTestStrategy:
 
                     if not too_close:
                         saved.append(new_zone)
+                        self._maybe_reanchor_tp_on_new_zone(symbol, new_zone, df_entry_closed)
                         logger.info(
                             "[%s] ZONA_GUARDADA %s | bar=%d top=%.8f bot=%.8f total=%d",
                             self.name,
@@ -731,6 +741,163 @@ class PivotZoneTestStrategy:
 
         self._prev_valid_by_symbol[symbol] = prev_valid
         self._last_len_zone[symbol] = len(df_zone_closed)
+
+    def _sync_local_position_take_profit(self, symbol: str, take_profit: float) -> None:
+        if self.broker_client is None:
+            return
+        try:
+            positions = getattr(self.broker_client, "open_positions", None)
+            if positions is None:
+                positions = getattr(self.broker_client, "positions", None)
+            if positions is None:
+                return
+            magic = self._get_magic_number()
+            for pos in positions:
+                if getattr(pos, "symbol", None) == symbol and getattr(pos, "magic_number", None) == magic:
+                    setattr(pos, "take_profit", float(take_profit))
+        except Exception:
+            pass
+
+    def _maybe_reanchor_tp_on_new_zone(
+        self,
+        symbol: str,
+        new_zone: Optional[Dict[str, float]],
+        df_entry_closed: Optional[pd.DataFrame],
+    ) -> None:
+        if not bool(self.adaptive_tp):
+            return
+        if new_zone is None or df_entry_closed is None or df_entry_closed.empty:
+            return
+
+        self._ensure_symbol_state(symbol)
+        state = self._trade_state[symbol]
+        if not state.in_position:
+            return
+
+        open_pos = self._get_open_position(symbol)
+        if open_pos is None:
+            return
+
+        if state.entry_fill_price is None and getattr(open_pos, "entry_price", None) is not None:
+            state.entry_fill_price = float(open_pos.entry_price)
+        if state.active_tp is None and getattr(open_pos, "take_profit", None) is not None:
+            state.active_tp = float(open_pos.take_profit)
+        if state.active_stop is None and getattr(open_pos, "stop_loss", None) is not None:
+            state.active_stop = float(open_pos.stop_loss)
+        if state.direction == 0:
+            open_dir = int(getattr(open_pos, "direction", 0) or 0)
+            if open_dir != 0:
+                state.direction = open_dir
+            elif state.active_tp is not None and state.active_stop is not None:
+                state.direction = 1 if float(state.active_tp) > float(state.active_stop) else -1
+
+        if state.entry_fill_price is None or state.active_tp is None:
+            return
+        if state.broken_zone is None or state.direction == 0:
+            return
+
+        current_close = float(df_entry_closed.iloc[-1]["close"])
+        broken_mid = (float(state.broken_zone["top"]) + float(state.broken_zone["bot"])) / 2.0
+        new_mid = (float(new_zone["top"]) + float(new_zone["bot"])) / 2.0
+
+        if state.direction > 0:
+            if new_mid <= broken_mid:
+                return
+        else:
+            if new_mid >= broken_mid:
+                return
+
+        candidate_tp = float(self._tp_edge_nearest(new_zone, state.entry_fill_price))
+        active_tp = float(state.active_tp)
+
+        if state.direction > 0:
+            if not (candidate_tp < active_tp and candidate_tp > current_close):
+                return
+        else:
+            if not (candidate_tp > active_tp and candidate_tp < current_close):
+                return
+
+        current_dist = abs(active_tp - float(state.entry_fill_price))
+        new_dist = abs(candidate_tp - float(state.entry_fill_price))
+        if current_dist <= 0.0:
+            return
+
+        improvement_pct = (current_dist - new_dist) / current_dist
+        if improvement_pct < float(self.adaptive_tp_min_improvement_pct):
+            return
+
+        position_volume = float(getattr(open_pos, "volume", 0.0) or 0.0)
+        if position_volume <= 0.0 or self.broker_client is None:
+            return
+
+        tp_type, _ = self._order_types_for_direction(state.direction)
+        magic = self._get_magic_number()
+
+        if self._use_pending_brackets():
+            if state.tp_order_id is not None:
+                try:
+                    self.broker_client.cancel_order(state.tp_order_id)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                state.tp_order_id = None
+            try:
+                if hasattr(self.broker_client, "get_open_orders"):
+                    for order in self.broker_client.get_open_orders(symbol=symbol, magic_number=magic):  # type: ignore[attr-defined]
+                        order_type = str(getattr(order, "order_type", getattr(order, "type", "")))
+                        if order_type != tp_type:
+                            continue
+                        oid = getattr(order, "order_id", None)
+                        if oid is None:
+                            oid = getattr(order, "ticket", None)
+                        if oid is None:
+                            continue
+                        try:
+                            self.broker_client.cancel_order(int(oid))  # type: ignore[attr-defined]
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+
+            try:
+                res_tp = self.broker_client.create_pending_order(  # type: ignore[attr-defined]
+                    symbol=symbol,
+                    order_type=tp_type,
+                    volume=position_volume,
+                    price=float(candidate_tp),
+                    magic_number=magic,
+                    comment=self.name,
+                )
+                if getattr(res_tp, "success", False):
+                    state.tp_order_id = getattr(res_tp, "order_id", None)
+            except Exception as e:
+                logger.warning("[%s] Error recreando TP adaptativo para %s: %s", self.name, symbol, e)
+        else:
+            if not hasattr(self.broker_client, "modify_position_sl_tp"):
+                return
+            try:
+                res = self.broker_client.modify_position_sl_tp(  # type: ignore[attr-defined]
+                    symbol=symbol,
+                    magic_number=magic,
+                    stop_loss=float(state.active_stop) if state.active_stop is not None else None,
+                    take_profit=float(candidate_tp),
+                )
+            except Exception as e:
+                logger.warning("[%s] Error actualizando TP adaptativo para %s: %s", self.name, symbol, e)
+                return
+            if not getattr(res, "success", False):
+                return
+
+        state.target_zone = dict(new_zone)
+        state.active_tp = float(candidate_tp)
+        self._sync_local_position_take_profit(symbol, candidate_tp)
+        logger.info(
+            "[%s] [TP REANCHORED] %s old_tp=%.5f new_tp=%.5f improvement_pct=%.4f",
+            self.name,
+            symbol,
+            active_tp,
+            candidate_tp,
+            improvement_pct,
+        )
 
     # -----------------------------
     # Pivotes de stop inicial (TF_stop)
@@ -1327,7 +1494,7 @@ class PivotZoneTestStrategy:
         self._ensure_symbol_state(symbol)
 
         # 1) Actualizar zonas (TF_zone) y pivotes stop (TF_stop)
-        self._process_zone_tf(symbol, df_zone, params)
+        self._process_zone_tf(symbol, df_zone, params, df_entry)
         self._process_stop_tf(symbol, df_stop)
 
         zones_count = len(self._saved_zones_by_symbol.get(symbol, []))
@@ -1355,6 +1522,8 @@ class PivotZoneTestStrategy:
                 state = _TradeState(in_position=True, direction=open_dir)
                 self._trade_state[symbol] = state
             # Recuperar SL/TP y dirección si el estado estaba limpio
+            if state.entry_fill_price is None and getattr(open_pos, "entry_price", None) is not None:
+                state.entry_fill_price = float(open_pos.entry_price)
             if state.active_stop is None and getattr(open_pos, "stop_loss", None) is not None:
                 state.active_stop = float(open_pos.stop_loss)
             if state.active_tp is None and getattr(open_pos, "take_profit", None) is not None:
@@ -1477,6 +1646,7 @@ class PivotZoneTestStrategy:
         state.in_position = True  # asumimos éxito; se re-sincroniza con broker en el siguiente ciclo
         state.direction = int(direction)
         state.entry_timeframe = self.tf_entry
+        state.entry_fill_price = None
         state.broken_zone = dict(broken_zone)
         state.target_zone = dict(target_zone)
         state.active_stop = float(stop_price_f)

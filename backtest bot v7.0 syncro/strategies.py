@@ -1245,6 +1245,8 @@ class PivotZoneTest(_BaseLoggedStrategy):
         ('n2', 60),         # Ancho zona % ATR
         ('n3', 3),          # Min pivotes para zona valida
         ('size_pct', 0.05), # Riesgo/porcentaje (usado por size_percent_by_stop)
+        ('adaptive_tp', True),
+        ('adaptive_tp_min_improvement_pct', 0.25),
     )
 
     plotinfo = dict(subplot=False)
@@ -1369,6 +1371,8 @@ class PivotZoneTest(_BaseLoggedStrategy):
 
         # Stop activo actual (para â€œno retrocederâ€)
         self._active_stop_price: Optional[float] = None
+        self._entry_fill_price: Optional[float] = None
+        self._active_tp_price: Optional[float] = None
 
         print(
             f"[INIT] PivotZoneTest | "
@@ -1572,6 +1576,8 @@ class PivotZoneTest(_BaseLoggedStrategy):
         self._frozen_zone_broken = None
         self._frozen_zone_target = None
         self._active_stop_price = None
+        self._entry_fill_price = None
+        self._active_tp_price = None
 
     def _replace_stop(self, new_stop_price: float):
         """
@@ -1608,6 +1614,86 @@ class PivotZoneTest(_BaseLoggedStrategy):
         dt = self.TF_entry.datetime.datetime(0)
         print(f"[TRAIL] {dt} | Nuevo STOP={self._active_stop_price:.6f} | dir={self._trade_dir}")
 
+    def _maybe_reanchor_tp_on_new_zone(self, new_zone: Optional[Dict[str, float]]):
+        if not bool(self.p.adaptive_tp):
+            return
+        if self.position.size == 0:
+            return
+        if self._tp_order is None:
+            return
+        try:
+            if not self._tp_order.alive():
+                return
+        except Exception:
+            return
+        if self._entry_fill_price is None or self._active_tp_price is None:
+            return
+        if self._frozen_zone_broken is None or new_zone is None:
+            return
+
+        current_close = float(self.TF_entry.close[0])
+        broken_mid = (
+            float(self._frozen_zone_broken["top"]) + float(self._frozen_zone_broken["bot"])
+        ) / 2.0
+        new_mid = (float(new_zone["top"]) + float(new_zone["bot"])) / 2.0
+
+        if self._trade_dir > 0:
+            if new_mid <= broken_mid:
+                return
+        elif self._trade_dir < 0:
+            if new_mid >= broken_mid:
+                return
+        else:
+            return
+
+        candidate_tp = float(self._tp_edge_nearest(new_zone, self._entry_fill_price))
+        active_tp = float(self._active_tp_price)
+
+        if self._trade_dir > 0:
+            if not (candidate_tp < active_tp and candidate_tp > current_close):
+                return
+        else:
+            if not (candidate_tp > active_tp and candidate_tp < current_close):
+                return
+
+        current_dist = abs(active_tp - float(self._entry_fill_price))
+        new_dist = abs(candidate_tp - float(self._entry_fill_price))
+        if current_dist <= 0.0:
+            return
+
+        improvement_pct = (current_dist - new_dist) / current_dist
+        if improvement_pct < float(self.p.adaptive_tp_min_improvement_pct):
+            return
+
+        size = abs(float(self.position.size))
+        if size <= 0.0:
+            return
+
+        self._cancel_if_alive(self._tp_order)
+        if self._trade_dir > 0:
+            self._tp_order = self.sell(
+                data=self.TF_entry,
+                exectype=bt.Order.Limit,
+                price=candidate_tp,
+                size=size,
+            )
+        else:
+            self._tp_order = self.buy(
+                data=self.TF_entry,
+                exectype=bt.Order.Limit,
+                price=candidate_tp,
+                size=size,
+            )
+
+        self._frozen_zone_target = new_zone
+        self._active_tp_price = candidate_tp
+        dt = self.TF_entry.datetime.datetime(0)
+        print(
+            f"[TP REANCHORED] {dt} | dir={self._trade_dir} | "
+            f"old_tp={active_tp:.6f} | new_tp={candidate_tp:.6f} | "
+            f"improvement_pct={improvement_pct:.4f}"
+        )
+
     # ============================================================
     # NOTIFY_ORDER (colocar TP/STOP tras entrada y limpiar en salida)
     # ============================================================
@@ -1642,6 +1728,8 @@ class PivotZoneTest(_BaseLoggedStrategy):
                     return
 
                 tp_price = float(self._tp_edge_nearest(self._frozen_zone_target, entry_price))
+                self._entry_fill_price = entry_price
+                self._active_tp_price = tp_price
 
                 # Stop (ya estÃ¡ en _active_stop_price)
                 stop_price = float(self._active_stop_price)
@@ -1856,6 +1944,7 @@ class PivotZoneTest(_BaseLoggedStrategy):
                             'bar': tf_zone_len,
                         }
                         self._saved_zones.append(new_zone)
+                        self._maybe_reanchor_tp_on_new_zone(new_zone)
                         try:
                             tf_label = getattr(self.TF_zone, "_timeframe_label", "zone")
                             ts_str = self.TF_zone.datetime.datetime(0).isoformat()
