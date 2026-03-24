@@ -761,6 +761,49 @@ def test_get_closed_trades_construye_trades_completos(mock_mt5, client):
     assert trades[0].size == 0.1
 
 
+def test_get_closed_trades_usa_pnl_neto_realizado(mock_mt5, client):
+    """El PnL del trade debe incluir profit, commission, swap y fee."""
+    mock_mt5.initialize.return_value = True
+    mock_mt5.terminal_info.return_value = Mock()
+    mock_mt5.account_info.return_value = Mock(login=12345, balance=10000.0)
+    mock_mt5.DEAL_ENTRY_IN = 0
+    mock_mt5.DEAL_ENTRY_OUT = 1
+
+    mock_deal_in = Mock()
+    mock_deal_in.position_id = 1001
+    mock_deal_in.ticket = 7001
+    mock_deal_in.entry = 0
+    mock_deal_in.symbol = "EURUSD"
+    mock_deal_in.magic = 12345
+    mock_deal_in.comment = "Test Strategy"
+    mock_deal_in.time = 1704067200
+    mock_deal_in.price = 1.1000
+    mock_deal_in.volume = 0.1
+
+    mock_deal_out = Mock()
+    mock_deal_out.position_id = 1001
+    mock_deal_out.ticket = 7002
+    mock_deal_out.entry = 1
+    mock_deal_out.symbol = "EURUSD"
+    mock_deal_out.magic = 12345
+    mock_deal_out.comment = "Test Strategy"
+    mock_deal_out.time = 1704067260
+    mock_deal_out.price = 1.1050
+    mock_deal_out.volume = 0.1
+    mock_deal_out.profit = 50.0
+    mock_deal_out.commission = -2.0
+    mock_deal_out.swap = -1.5
+    mock_deal_out.fee = -0.5
+
+    mock_mt5.history_deals_get.return_value = [mock_deal_in, mock_deal_out]
+
+    client.connect()
+    trades = client.get_closed_trades()
+
+    assert len(trades) == 1
+    assert trades[0].pnl == 46.0
+
+
 def test_get_closed_trades_consulta_history_con_datetimes_utc_aware(mock_mt5, client):
     """history_deals_get debe recibir rango UTC-aware en get_closed_trades."""
     mock_mt5.initialize.return_value = True

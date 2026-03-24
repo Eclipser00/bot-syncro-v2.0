@@ -70,7 +70,8 @@ class RiskLimits:
         dd_global: Drawdown máximo permitido a nivel global (%).
         dd_por_activo: Límite de drawdown por símbolo.
         dd_por_estrategia: Límite de drawdown por estrategia.
-        initial_balance: Balance inicial de la cuenta para calcular drawdown correctamente.
+        initial_balance: Balance inicial legacy para compatibilidad transitoria.
+        risk_state_path: Ruta opcional del estado persistido de drawdown.
         max_margin_usage_percent: Porcentaje máximo de margen usado permitido (ej: 80.0 = 80%).
     """
 
@@ -78,6 +79,7 @@ class RiskLimits:
     dd_por_activo: dict[str, float] = field(default_factory=dict)
     dd_por_estrategia: dict[str, float] = field(default_factory=dict)
     initial_balance: float = 10000.0
+    risk_state_path: Optional[str] = None
     max_margin_usage_percent: Optional[float] = None
 
 

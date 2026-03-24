@@ -65,6 +65,11 @@ class TradingBot:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
 
+    @staticmethod
+    def _trade_sort_key(trade: TradeRecord) -> tuple[datetime, int]:
+        """Ordena trades cerrados cronologicamente con desempate por ticket."""
+        return (trade.exit_time, int(trade.exit_deal_ticket or 0))
+
     def sync_clock_with_broker(
         self,
         *,
@@ -145,16 +150,34 @@ class TradingBot:
         self.order_executor.sync_state()
         
         # Actualizar trade_history con trades cerrados del broker
-        self._update_trade_history()
-        
-        if not self.risk_manager.check_bot_risk_limits(self.trade_history):
-            logger.warning("Bot bloqueado por lÃ­mites globales de riesgo")
-            return
+        new_closed_trades = self._update_trade_history()
+
+        if self.risk_manager.has_drawdown_limits():
+            try:
+                account_info = self.broker_client.get_account_info()
+                current_account_balance = float(account_info.balance)
+            except AttributeError:
+                logger.error(
+                    "Broker no implementa get_account_info y hay limites de drawdown configurados. Bot bloqueado por seguridad."
+                )
+                return
+            except Exception as exc:
+                logger.error(
+                    "Error obteniendo balance de cuenta para drawdown incremental: %s",
+                    exc,
+                )
+                return
+
+            self.risk_manager.apply_closed_trades(new_closed_trades, current_account_balance)
+
+            if not self.risk_manager.check_bot_risk_limits(current_account_balance):
+                logger.warning("Bot bloqueado por lÃ­mites globales de riesgo")
+                return
 
         for symbol in self.symbols:
             if symbol.name in self._exhausted_symbols:
                 continue
-            if not self.risk_manager.check_symbol_risk_limits(symbol.name, self.trade_history):
+            if not self.risk_manager.check_symbol_risk_limits(symbol.name):
                 logger.info("SÃ­mbolo %s bloqueado por riesgo", symbol.name)
                 continue
 
@@ -318,9 +341,7 @@ class TradingBot:
                 continue
 
             for strategy in self.strategies:
-                if not self.risk_manager.check_strategy_risk_limits(
-                    strategy.name, self.trade_history
-                ):
+                if not self.risk_manager.check_strategy_risk_limits(strategy.name):
                     logger.info(
                         "Estrategia %s bloqueada por riesgo", strategy.name
                     )
@@ -629,7 +650,7 @@ class TradingBot:
                 logger.info("Esperando 10 segundos antes de reintentar...")
                 time.sleep(10)
 
-    def _update_trade_history(self) -> None:
+    def _update_trade_history(self) -> list[TradeRecord]:
         """Actualiza el historial de trades con los cerrados del broker.
 
         Prioriza IDs de broker (position_id/deal tickets) para deduplicacion,
@@ -674,6 +695,8 @@ class TradingBot:
                 return str(int(trade.magic_number))
             return ""
 
+        new_trades: list[TradeRecord] = []
+
         try:
             closed_trades = self.broker_client.get_closed_trades()
             existing_trades = {_trade_identity(t) for t in self.trade_history}
@@ -684,6 +707,7 @@ class TradingBot:
                     continue
 
                 self.trade_history.append(trade)
+                new_trades.append(trade)
                 existing_trades.add(trade_key)
                 logger.debug("Trade cerrado agregado al historial: %s", trade)
 
@@ -739,3 +763,4 @@ class TradingBot:
             logger.debug("Broker no soporta get_closed_trades, historial no actualizado")
         except Exception as e:
             logger.error("Error actualizando historial de trades: %s", e)
+        return sorted(new_trades, key=self._trade_sort_key)

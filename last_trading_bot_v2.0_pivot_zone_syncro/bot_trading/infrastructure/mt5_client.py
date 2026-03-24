@@ -1618,6 +1618,12 @@ class MetaTrader5Client:
             exit_volume = self._safe_float(getattr(exit_deal, "volume", None), default=0.0)
             if exit_volume <= 0.0:
                 exit_volume = self._safe_float(getattr(entry_deal, "volume", 0.0), default=0.0)
+            net_pnl = (
+                self._safe_float(getattr(exit_deal, "profit", 0.0), default=0.0)
+                + self._safe_float(getattr(exit_deal, "commission", 0.0), default=0.0)
+                + self._safe_float(getattr(exit_deal, "swap", 0.0), default=0.0)
+                + self._safe_float(getattr(exit_deal, "fee", 0.0), default=0.0)
+            )
 
             trade_record = TradeRecord(
                 symbol=str(getattr(exit_deal, "symbol", None) or getattr(entry_deal, "symbol", "")),
@@ -1627,7 +1633,7 @@ class MetaTrader5Client:
                 entry_price=self._safe_float(getattr(entry_deal, "price", 0.0), default=0.0),
                 exit_price=self._safe_float(getattr(exit_deal, "price", 0.0), default=0.0),
                 size=exit_volume,
-                pnl=self._safe_float(getattr(exit_deal, "profit", 0.0), default=0.0),
+                pnl=net_pnl,
                 stop_loss=None,
                 take_profit=None,
                 position_id=position_id,
@@ -1641,7 +1647,7 @@ class MetaTrader5Client:
             if persist_dedupe:
                 self._closed_trade_dedupe_keys.add(dedupe_key)
 
-        result.sort(key=lambda x: x.exit_time, reverse=True)
+        result.sort(key=lambda x: (x.exit_time, int(x.exit_deal_ticket or 0)))
 
         if update_cursor:
             max_deal = trading_deals[-1]

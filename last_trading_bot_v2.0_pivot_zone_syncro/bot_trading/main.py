@@ -712,6 +712,7 @@ def _build_risk_manager() -> RiskManager:
         dd_por_activo=risk_cfg.dd_por_activo,
         dd_por_estrategia=risk_cfg.dd_por_estrategia,
         initial_balance=risk_cfg.initial_balance,
+        risk_state_path=risk_cfg.risk_state_path,
         max_margin_usage_percent=risk_cfg.max_margin_usage_percent,
     )
     return RiskManager(risk_limits)

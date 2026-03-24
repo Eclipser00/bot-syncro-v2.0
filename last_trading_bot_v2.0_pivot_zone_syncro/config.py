@@ -52,7 +52,7 @@ def _reexec_with_project_venv_if_needed() -> None:
 # =============================================================================
 
 # Selecciona el entorno activo: "development" (paper/FakeBroker), "production" (MT5 real) o "testing".
-ACTIVE_ENV = "development"  # entorno que usara el bot al arrancar
+ACTIVE_ENV = "production"  # entorno que usara el bot al arrancar
 
 
 # =============================================================================
