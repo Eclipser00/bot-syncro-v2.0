@@ -107,7 +107,8 @@ class RiskConfig:
     dd_global: drawdown maximo global del bot.
     dd_por_activo: drawdown maximo por simbolo.
     dd_por_estrategia: drawdown maximo por estrategia.
-    initial_balance: balance de referencia para calculos (moneda de la cuenta).
+    initial_balance: balance legacy de referencia para compatibilidad transitoria.
+    risk_state_path: ruta del estado persistido del drawdown incremental.
     max_margin_usage_percent: porcentaje maximo del capital que se permite usar como margen.
     """
 
@@ -115,6 +116,7 @@ class RiskConfig:
     dd_por_activo: Dict[str, float] = field(default_factory=dict)  # drawdown maximo por simbolo (%)
     dd_por_estrategia: Dict[str, float] = field(default_factory=dict)  # drawdown maximo por estrategia (%)
     initial_balance: float = 20_000.0  # balance de referencia para calculos
+    risk_state_path: str = "outputs/risk_state.json"  # estado persistido del drawdown incremental
     max_margin_usage_percent: float = 80.0  # porcentaje maximo de margen a usar
 
 
